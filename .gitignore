@@ -2,3 +2,6 @@ config/.env
 vendor/
 storage/logs/*
 !storage/logs/.gitkeep
+error_log
+public/error_log
+
