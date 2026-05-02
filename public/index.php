@@ -74,7 +74,7 @@ $router->get('/', static function () use ($envPath, $apiBaseUrl): void {
     }
 
     $pdo = timePdo($envPath);
-    renderApp('Dashboard', 'dashboard.php', $identity, [
+    renderApp('Dashboard', 'home.php', $identity, [
         'calendars' => listCalendars($pdo, $identity['id']),
         'events' => listEvents($pdo, $identity['id'], null),
     ]);
@@ -89,7 +89,7 @@ $router->get('/calendars', static function () use ($envPath, $apiBaseUrl): void 
     $calendars = listCalendars(timePdo($envPath), $identity['id']);
 
     if (isBrowserRequest()) {
-        renderApp('Calendars', 'calendars.php', $identity, ['calendars' => $calendars]);
+        renderApp('Calendars', 'calendars/index.php', $identity, ['calendars' => $calendars]);
         return;
     }
 
@@ -102,7 +102,7 @@ $router->get('/calendars/new', static function () use ($apiBaseUrl): void {
         return;
     }
 
-    renderApp('New calendar', 'calendar-new.php', $identity, [
+    renderApp('New calendar', 'calendars/new.php', $identity, [
         'error' => null,
         'old' => [],
     ]);
@@ -118,7 +118,7 @@ $router->post('/calendars', static function () use ($envPath, $apiBaseUrl): void
     $name = cleanString($input['name'] ?? null);
     if ($name === null) {
         if (isBrowserRequest()) {
-            renderApp('New calendar', 'calendar-new.php', $identity, [
+            renderApp('New calendar', 'calendars/new.php', $identity, [
                 'error' => 'Calendar name is required.',
                 'old' => formOld($input, ['name', 'color', 'timezone']),
             ], 400);
@@ -255,7 +255,7 @@ $router->get('/events', static function () use ($envPath, $apiBaseUrl): void {
     $events = listEvents(timePdo($envPath), $identity['id'], $calendarId);
 
     if (isBrowserRequest()) {
-        renderApp('Events', 'events.php', $identity, ['events' => $events]);
+        renderApp('Events', 'events/index.php', $identity, ['events' => $events]);
         return;
     }
 
@@ -268,7 +268,7 @@ $router->get('/events/new', static function () use ($envPath, $apiBaseUrl): void
         return;
     }
 
-    renderApp('New event', 'event-new.php', $identity, [
+    renderApp('New event', 'events/new.php', $identity, [
         'error' => null,
         'old' => [],
         'calendars' => listCalendars(timePdo($envPath), $identity['id']),
@@ -290,7 +290,7 @@ $router->post('/events', static function () use ($envPath, $apiBaseUrl): void {
 
     if ($calendarId === null || findCalendar($pdo, $identity['id'], $calendarId) === null) {
         if (isBrowserRequest()) {
-            renderApp('New event', 'event-new.php', $identity, [
+            renderApp('New event', 'events/new.php', $identity, [
                 'error' => 'Valid calendar is required.',
                 'old' => formOld($input, ['calendar_id', 'title', 'starts_at', 'ends_at', 'location', 'description']),
                 'calendars' => listCalendars($pdo, $identity['id']),
@@ -304,7 +304,7 @@ $router->post('/events', static function () use ($envPath, $apiBaseUrl): void {
 
     if ($title === null || $startsAt === null || $endsAt === null) {
         if (isBrowserRequest()) {
-            renderApp('New event', 'event-new.php', $identity, [
+            renderApp('New event', 'events/new.php', $identity, [
                 'error' => 'Title, starts, and ends are required.',
                 'old' => formOld($input, ['calendar_id', 'title', 'starts_at', 'ends_at', 'location', 'description']),
                 'calendars' => listCalendars($pdo, $identity['id']),
@@ -318,7 +318,7 @@ $router->post('/events', static function () use ($envPath, $apiBaseUrl): void {
 
     if ($endsAt <= $startsAt) {
         if (isBrowserRequest()) {
-            renderApp('New event', 'event-new.php', $identity, [
+            renderApp('New event', 'events/new.php', $identity, [
                 'error' => 'Event end must be after start.',
                 'old' => formOld($input, ['calendar_id', 'title', 'starts_at', 'ends_at', 'location', 'description']),
                 'calendars' => listCalendars($pdo, $identity['id']),
