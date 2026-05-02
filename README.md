@@ -55,6 +55,32 @@ Current endpoints:
 - `PATCH /events/{id}`
 - `DELETE /events/{id}`
 
+## Browser Frontend
+
+The service includes a minimal server-rendered frontend using plain PHP templates and shared CSS from:
+
+```text
+public/assets/time.css
+```
+
+Browser-facing routes:
+
+- `GET /`
+- `GET /calendars`
+- `GET /calendars/new`
+- `POST /calendars`
+- `GET /events`
+- `GET /events/new`
+- `POST /events`
+
+Time does not implement login or registration. Browser requests without a valid API auth cookie are redirected to:
+
+```text
+http://elonn.local/account/login
+```
+
+If the API auth cookie is available to `time.elonn.local`, Time validates it through `GET /identity/me` before rendering pages.
+
 ## Database
 
 The current database is:

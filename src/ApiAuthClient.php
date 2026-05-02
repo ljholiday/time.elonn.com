@@ -18,7 +18,7 @@ final class ApiAuthClient
     }
 
     /**
-     * @return array{id: string, email: string}|null
+     * @return array{id: string, email: string, display_name: string|null}|null
      */
     public function identityForToken(string $token): ?array
     {
@@ -29,6 +29,7 @@ final class ApiAuthClient
 
         $id = $response['json']['id'] ?? null;
         $email = $response['json']['email'] ?? null;
+        $displayName = $response['json']['display_name'] ?? null;
         if (!is_string($id) && !is_int($id)) {
             return null;
         }
@@ -40,6 +41,7 @@ final class ApiAuthClient
         return [
             'id' => (string) $id,
             'email' => $email,
+            'display_name' => is_string($displayName) ? $displayName : null,
         ];
     }
 

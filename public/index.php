@@ -7,6 +7,7 @@ use Elonn\Time\Database;
 use Elonn\Time\Env;
 use Elonn\Time\Response;
 use Elonn\Time\Router;
+use Elonn\Time\View;
 
 define('BASE_PATH', dirname(__DIR__));
 
@@ -66,22 +67,45 @@ $router->get('/ready', static function () use ($envPath, $apiBaseUrl): void {
     ], $ready ? 200 : 500);
 });
 
+$router->get('/', static function () use ($envPath, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $pdo = timePdo($envPath);
+    renderApp('Dashboard', 'dashboard.php', $identity, [
+        'calendars' => listCalendars($pdo, $identity['id']),
+        'events' => listEvents($pdo, $identity['id'], null),
+    ]);
+});
+
 $router->get('/calendars', static function () use ($envPath, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $stmt = timePdo($envPath)->prepare(
-        "SELECT id, name, color, timezone, status, created_at, updated_at
-         FROM time_calendars
-         WHERE identity_user_id = :identity_user_id
-           AND status <> 'deleted'
-         ORDER BY id"
-    );
-    $stmt->execute([':identity_user_id' => $identity['id']]);
+    $calendars = listCalendars(timePdo($envPath), $identity['id']);
 
-    Response::json(['calendars' => array_map('calendarPayload', $stmt->fetchAll())]);
+    if (isBrowserRequest()) {
+        renderApp('Calendars', 'calendars.php', $identity, ['calendars' => $calendars]);
+        return;
+    }
+
+    Response::json(['calendars' => array_map('calendarPayload', $calendars)]);
+});
+
+$router->get('/calendars/new', static function () use ($apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    renderApp('New calendar', 'calendar-new.php', $identity, [
+        'error' => null,
+        'old' => [],
+    ]);
 });
 
 $router->post('/calendars', static function () use ($envPath, $apiBaseUrl): void {
@@ -90,9 +114,17 @@ $router->post('/calendars', static function () use ($envPath, $apiBaseUrl): void
         return;
     }
 
-    $input = readJsonInput();
+    $input = requestInput();
     $name = cleanString($input['name'] ?? null);
     if ($name === null) {
+        if (isBrowserRequest()) {
+            renderApp('New calendar', 'calendar-new.php', $identity, [
+                'error' => 'Calendar name is required.',
+                'old' => formOld($input, ['name', 'color', 'timezone']),
+            ], 400);
+            return;
+        }
+
         Response::json(['error' => 'Calendar name is required.'], 400);
         return;
     }
@@ -114,6 +146,12 @@ $router->post('/calendars', static function () use ($envPath, $apiBaseUrl): void
     ]);
 
     $calendar = findCalendar(timePdo($envPath), $identity['id'], (int) timePdo($envPath)->lastInsertId());
+
+    if (isBrowserRequest()) {
+        redirect('/calendars');
+        return;
+    }
+
     Response::json(['calendar' => calendarPayload($calendar)], 201);
 });
 
@@ -214,22 +252,27 @@ $router->get('/events', static function () use ($envPath, $apiBaseUrl): void {
     }
 
     $calendarId = positiveInt($_GET['calendar_id'] ?? null);
-    $sql = "SELECT id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, created_at, updated_at
-            FROM time_events
-            WHERE identity_user_id = :identity_user_id
-              AND status <> 'deleted'";
-    $params = [':identity_user_id' => $identity['id']];
+    $events = listEvents(timePdo($envPath), $identity['id'], $calendarId);
 
-    if ($calendarId !== null) {
-        $sql .= ' AND calendar_id = :calendar_id';
-        $params[':calendar_id'] = $calendarId;
+    if (isBrowserRequest()) {
+        renderApp('Events', 'events.php', $identity, ['events' => $events]);
+        return;
     }
 
-    $sql .= ' ORDER BY starts_at, id';
-    $stmt = timePdo($envPath)->prepare($sql);
-    $stmt->execute($params);
+    Response::json(['events' => array_map('eventPayload', $events)]);
+});
 
-    Response::json(['events' => array_map('eventPayload', $stmt->fetchAll())]);
+$router->get('/events/new', static function () use ($envPath, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    renderApp('New event', 'event-new.php', $identity, [
+        'error' => null,
+        'old' => [],
+        'calendars' => listCalendars(timePdo($envPath), $identity['id']),
+    ]);
 });
 
 $router->post('/events', static function () use ($envPath, $apiBaseUrl): void {
@@ -239,23 +282,50 @@ $router->post('/events', static function () use ($envPath, $apiBaseUrl): void {
     }
 
     $pdo = timePdo($envPath);
-    $input = readJsonInput();
+    $input = requestInput();
     $calendarId = positiveInt($input['calendar_id'] ?? null);
     $title = cleanString($input['title'] ?? null);
     $startsAt = normalizeDateTime($input['starts_at'] ?? null);
     $endsAt = normalizeDateTime($input['ends_at'] ?? null);
 
     if ($calendarId === null || findCalendar($pdo, $identity['id'], $calendarId) === null) {
+        if (isBrowserRequest()) {
+            renderApp('New event', 'event-new.php', $identity, [
+                'error' => 'Valid calendar is required.',
+                'old' => formOld($input, ['calendar_id', 'title', 'starts_at', 'ends_at', 'location', 'description']),
+                'calendars' => listCalendars($pdo, $identity['id']),
+            ], 400);
+            return;
+        }
+
         Response::json(['error' => 'Valid calendar_id is required.'], 400);
         return;
     }
 
     if ($title === null || $startsAt === null || $endsAt === null) {
+        if (isBrowserRequest()) {
+            renderApp('New event', 'event-new.php', $identity, [
+                'error' => 'Title, starts, and ends are required.',
+                'old' => formOld($input, ['calendar_id', 'title', 'starts_at', 'ends_at', 'location', 'description']),
+                'calendars' => listCalendars($pdo, $identity['id']),
+            ], 400);
+            return;
+        }
+
         Response::json(['error' => 'Event title, starts_at, and ends_at are required.'], 400);
         return;
     }
 
     if ($endsAt <= $startsAt) {
+        if (isBrowserRequest()) {
+            renderApp('New event', 'event-new.php', $identity, [
+                'error' => 'Event end must be after start.',
+                'old' => formOld($input, ['calendar_id', 'title', 'starts_at', 'ends_at', 'location', 'description']),
+                'calendars' => listCalendars($pdo, $identity['id']),
+            ], 400);
+            return;
+        }
+
         Response::json(['error' => 'Event ends_at must be after starts_at.'], 400);
         return;
     }
@@ -280,6 +350,12 @@ $router->post('/events', static function () use ($envPath, $apiBaseUrl): void {
     ]);
 
     $event = findEvent($pdo, $identity['id'], (int) $pdo->lastInsertId());
+
+    if (isBrowserRequest()) {
+        redirect('/events');
+        return;
+    }
+
     Response::json(['event' => eventPayload($event)], 201);
 });
 
@@ -416,12 +492,17 @@ function timePdo(string $envPath): PDO
 }
 
 /**
- * @return array{id: string, email: string}|null
+ * @return array{id: string, email: string, display_name: string|null}|null
  */
 function requireIdentity(string $apiBaseUrl): ?array
 {
-    $token = bearerToken();
+    $token = bearerToken() ?? cookieToken();
     if ($token === null) {
+        if (isBrowserRequest()) {
+            redirect(accountLoginUrl());
+            return null;
+        }
+
         Response::json(['error' => 'Bearer token required.'], 401);
         return null;
     }
@@ -433,6 +514,11 @@ function requireIdentity(string $apiBaseUrl): ?array
     }
 
     if ($identity === null) {
+        if (isBrowserRequest()) {
+            redirect(accountLoginUrl());
+            return null;
+        }
+
         Response::json(['error' => 'Invalid or expired token.'], 401);
         return null;
     }
@@ -452,6 +538,87 @@ function bearerToken(): ?string
 
     $token = trim(substr($header, 7));
     return $token === '' ? null : $token;
+}
+
+function cookieToken(): ?string
+{
+    $token = $_COOKIE['elonn_api_token'] ?? null;
+    if (!is_string($token)) {
+        return null;
+    }
+
+    $token = trim($token);
+    return $token === '' ? null : $token;
+}
+
+function isBrowserRequest(): bool
+{
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (is_string($contentType) && (
+        str_contains($contentType, 'application/x-www-form-urlencoded')
+        || str_contains($contentType, 'multipart/form-data')
+    )) {
+        return true;
+    }
+
+    $accept = $_SERVER['HTTP_ACCEPT'] ?? '';
+    return is_string($accept) && str_contains($accept, 'text/html');
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function requestInput(): array
+{
+    if (isBrowserRequest()) {
+        return $_POST;
+    }
+
+    return readJsonInput();
+}
+
+/**
+ * @param array<string, mixed> $input
+ * @param array<int, string> $keys
+ * @return array<string, string>
+ */
+function formOld(array $input, array $keys): array
+{
+    $old = [];
+    foreach ($keys as $key) {
+        $value = $input[$key] ?? '';
+        $old[$key] = is_string($value) ? $value : '';
+    }
+
+    return $old;
+}
+
+/**
+ * @param array{id: string, email: string, display_name: string|null} $identity
+ * @param array<string, mixed> $data
+ */
+function renderApp(string $title, string $contentTemplate, array $identity, array $data = [], int $status = 200): void
+{
+    View::render('layout.php', [
+        'title' => $title,
+        'contentTemplate' => $contentTemplate,
+        'identity' => $identity,
+        'data' => $data,
+    ], $status);
+}
+
+function redirect(string $path): void
+{
+    http_response_code(303);
+    header('Location: ' . $path);
+}
+
+function accountLoginUrl(): string
+{
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    return str_contains((string) $host, 'elonn.local')
+        ? 'http://elonn.local/account/login'
+        : 'https://elonn.com/account/login';
 }
 
 /**
@@ -521,6 +688,46 @@ function truthy(mixed $value): bool
 function now(): string
 {
     return date('Y-m-d H:i:s');
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function listCalendars(PDO $pdo, string $identityUserId): array
+{
+    $stmt = $pdo->prepare(
+        "SELECT id, name, color, timezone, status, created_at, updated_at
+         FROM time_calendars
+         WHERE identity_user_id = :identity_user_id
+           AND status <> 'deleted'
+         ORDER BY id"
+    );
+    $stmt->execute([':identity_user_id' => $identityUserId]);
+
+    return $stmt->fetchAll();
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function listEvents(PDO $pdo, string $identityUserId, ?int $calendarId): array
+{
+    $sql = "SELECT id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, created_at, updated_at
+            FROM time_events
+            WHERE identity_user_id = :identity_user_id
+              AND status <> 'deleted'";
+    $params = [':identity_user_id' => $identityUserId];
+
+    if ($calendarId !== null) {
+        $sql .= ' AND calendar_id = :calendar_id';
+        $params[':calendar_id'] = $calendarId;
+    }
+
+    $sql .= ' ORDER BY starts_at, id';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
+    return $stmt->fetchAll();
 }
 
 /**
