@@ -1,6 +1,8 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
     RewriteCond %{DOCUMENT_ROOT}/public%{REQUEST_URI} -f
     RewriteRule ^(.*)$ public/$1 [L]
 

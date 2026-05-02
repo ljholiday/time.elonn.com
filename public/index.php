@@ -29,6 +29,12 @@ $env = Env::load($envPath);
 $apiBaseUrl = $env['ELONN_API_BASE_URL'] ?? 'http://api.elonn.local';
 $router = new Router();
 
+$requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+if (isDavPath($requestPath)) {
+    handleDavRequest($apiBaseUrl);
+    return;
+}
+
 $router->get('/health', static function (): void {
     Response::json([
         'status' => 'ok',
@@ -476,7 +482,7 @@ $router->delete('/events/{id}', static function (array $params) use ($envPath, $
 
 $router->dispatch(
     $_SERVER['REQUEST_METHOD'] ?? 'GET',
-    parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/'
+    $requestPath
 );
 
 function timePdo(string $envPath): PDO
@@ -524,6 +530,99 @@ function requireIdentity(string $apiBaseUrl): ?array
     }
 
     return $identity;
+}
+
+function isDavPath(string $path): bool
+{
+    $path = '/' . trim($path, '/');
+    return $path === '/dav' || str_starts_with($path, '/dav/');
+}
+
+function handleDavRequest(string $apiBaseUrl): void
+{
+    $credentials = basicAuthCredentials();
+    if ($credentials === null) {
+        davUnauthorized();
+        return;
+    }
+
+    try {
+        $identity = (new ApiAuthClient($apiBaseUrl))->identityForDavCredentials(
+            $credentials['username'],
+            $credentials['password']
+        );
+    } catch (Throwable) {
+        $identity = null;
+    }
+
+    if ($identity === null) {
+        davUnauthorized();
+        return;
+    }
+
+    $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    header('DAV: 1, 3, calendar-access');
+    header('MS-Author-Via: DAV');
+
+    if ($method === 'OPTIONS') {
+        http_response_code(204);
+        header('Allow: OPTIONS, PROPFIND');
+        return;
+    }
+
+    if ($method === 'PROPFIND') {
+        http_response_code(501);
+        header('Content-Type: application/xml; charset=utf-8');
+        echo '<?xml version="1.0" encoding="UTF-8"?>';
+        echo '<d:error xmlns:d="DAV:"><d:responsedescription>CalDAV collections are not implemented yet.</d:responsedescription></d:error>';
+        return;
+    }
+
+    http_response_code(501);
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'error' => 'CalDAV collections are not implemented yet.',
+        'identity_user_id' => $identity['id'],
+    ], JSON_UNESCAPED_SLASHES);
+}
+
+/**
+ * @return array{username: string, password: string}|null
+ */
+function basicAuthCredentials(): ?array
+{
+    $username = $_SERVER['PHP_AUTH_USER'] ?? null;
+    $password = $_SERVER['PHP_AUTH_PW'] ?? null;
+
+    if (!is_string($username) || !is_string($password)) {
+        $header = $_SERVER['HTTP_AUTHORIZATION']
+            ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION']
+            ?? '';
+        if (is_string($header) && stripos($header, 'Basic ') === 0) {
+            $decoded = base64_decode(substr($header, 6), true);
+            if (is_string($decoded) && str_contains($decoded, ':')) {
+                [$username, $password] = explode(':', $decoded, 2);
+            }
+        }
+    }
+
+    if (!is_string($username) || !is_string($password) || trim($username) === '' || $password === '') {
+        return null;
+    }
+
+    return [
+        'username' => trim($username),
+        'password' => $password,
+    ];
+}
+
+function davUnauthorized(): void
+{
+    http_response_code(401);
+    header('WWW-Authenticate: Basic realm="Elonn Time DAV"');
+    header('Content-Type: application/xml; charset=utf-8');
+    echo '<?xml version="1.0" encoding="UTF-8"?>';
+    echo '<d:error xmlns:d="DAV:"><d:responsedescription>Authentication required.</d:responsedescription></d:error>';
 }
 
 function bearerToken(): ?string

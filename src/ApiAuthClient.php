@@ -23,42 +23,50 @@ final class ApiAuthClient
     public function identityForToken(string $token): ?array
     {
         $response = $this->request('GET', '/identity/me', $token);
-        if ($response['status'] !== 200 || !is_array($response['json'])) {
-            return null;
-        }
+        return $response['status'] === 200 && is_array($response['json'])
+            ? $this->identityFromJson($response['json'])
+            : null;
+    }
 
-        $id = $response['json']['id'] ?? null;
-        $email = $response['json']['email'] ?? null;
-        $displayName = $response['json']['display_name'] ?? null;
-        if (!is_string($id) && !is_int($id)) {
-            return null;
-        }
-
-        if (!is_string($email)) {
-            return null;
-        }
-
-        return [
-            'id' => (string) $id,
-            'email' => $email,
-            'display_name' => is_string($displayName) ? $displayName : null,
-        ];
+    /**
+     * @return array{id: string, email: string, display_name: string|null}|null
+     */
+    public function identityForDavCredentials(string $username, string $password): ?array
+    {
+        $response = $this->request('POST', '/identity/dav/validate', null, [
+            'username' => $username,
+            'password' => $password,
+        ]);
+        return $response['status'] === 200 && is_array($response['json'])
+            ? $this->identityFromJson($response['json'])
+            : null;
     }
 
     /**
      * @return array{status: int, json: mixed}
      */
-    private function request(string $method, string $path, ?string $token): array
+    /**
+     * @param array<string, mixed>|null $body
+     * @return array{status: int, json: mixed}
+     */
+    private function request(string $method, string $path, ?string $token, ?array $body = null): array
     {
         $headers = ['Accept: application/json'];
+        $content = '';
         if ($token !== null) {
             $headers[] = 'Authorization: Bearer ' . $token;
+        }
+
+        if ($body !== null) {
+            $headers[] = 'Content-Type: application/json';
+            $content = json_encode($body, JSON_UNESCAPED_SLASHES) ?: '{}';
         }
 
         $context = stream_context_create([
             'http' => [
                 'method' => $method,
                 'header' => implode("\r\n", $headers),
+                'content' => $content,
                 'ignore_errors' => true,
                 'timeout' => 5,
             ],
@@ -82,6 +90,30 @@ final class ApiAuthClient
         return [
             'status' => $status,
             'json' => $json,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $json
+     * @return array{id: string, email: string, display_name: string|null}|null
+     */
+    private function identityFromJson(array $json): ?array
+    {
+        $id = $json['id'] ?? null;
+        $email = $json['email'] ?? null;
+        $displayName = $json['display_name'] ?? null;
+        if (!is_string($id) && !is_int($id)) {
+            return null;
+        }
+
+        if (!is_string($email)) {
+            return null;
+        }
+
+        return [
+            'id' => (string) $id,
+            'email' => $email,
+            'display_name' => is_string($displayName) ? $displayName : null,
         ];
     }
 }

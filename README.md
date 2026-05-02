@@ -121,6 +121,48 @@ https://elonn.com/account/login
 
 If the shared `elonn_api_token` cookie is available to `time.elonn.local` or `time.elonn.com`, Time validates it through `GET /identity/me` before rendering pages.
 
+## CalDAV Access
+
+The planned Thunderbird and CalDAV client URL is:
+
+```text
+https://time.elonn.com/dav/
+```
+
+Local development:
+
+```text
+http://time.elonn.local/dav/
+```
+
+CalDAV clients cannot rely on the browser shared cookie. DAV access uses HTTP Basic Auth:
+
+```text
+username: Elonn account email or username
+password: generated Elonn DAV token
+```
+
+The DAV token is owned by the API identity service. Time receives Basic Auth credentials from the DAV client and validates them by calling:
+
+```text
+POST https://api.elonn.com/identity/dav/validate
+```
+
+Local development:
+
+```text
+POST http://api.elonn.local/identity/dav/validate
+```
+
+On success, Time uses the returned `id` to scope calendars, events, and future tasks. On failure, Time returns `401` with a `WWW-Authenticate: Basic` challenge.
+
+Current DAV status:
+
+- `/dav/` route exists.
+- Basic Auth challenge exists.
+- Time validates DAV credentials through API.
+- Full CalDAV collections, events, tasks, sync, and Thunderbird discovery are not implemented yet.
+
 ## Database
 
 The local database is:
@@ -183,6 +225,7 @@ DB_NAME=ljholida_elonn_time
 - Time owns calendar data.
 - API owns shared identity.
 - Time validates bearer tokens only through API HTTP endpoints.
+- Time validates DAV Basic Auth credentials only through API HTTP endpoints.
 - Time must not connect directly to `elonn_api`.
 - Time must not implement its own login or registration.
 - CalDAV should be implemented as an additional protocol surface without replacing existing browser or JSON routes.
@@ -241,4 +284,5 @@ https://time.elonn.com/ready
 https://time.elonn.com/
 https://time.elonn.com/calendars
 https://time.elonn.com/events
+https://time.elonn.com/dav/
 ```

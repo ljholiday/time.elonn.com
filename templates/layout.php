@@ -12,6 +12,13 @@ $displayUser = $identity['display_name'] ?: $identity['email'];
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= htmlspecialchars($title, ENT_QUOTES, 'UTF-8') ?> - Elonn Time</title>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-LNJE3CGYKC"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-LNJE3CGYKC');
+    </script>
     <link rel="stylesheet" href="/assets/time.css">
 </head>
 <body>
