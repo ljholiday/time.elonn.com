@@ -2,7 +2,32 @@
 
 `time.elonn.local` is the standalone calendar/time product service for Elonn.
 
-It owns the `elonn_time` product database and validates identity by calling the shared API identity service. It must not connect directly to the `elonn_api` database.
+Production is `time.elonn.com`.
+
+Time owns its product database and validates identity by calling the shared API identity service. It must not connect directly to the `elonn_api` database.
+
+## Dependencies
+
+CalDAV support will use SabreDAV:
+
+```text
+sabre/dav
+```
+
+Dependencies are managed with Composer locally, but production shared hosting does not need Composer installed.
+
+Committed dependency files:
+
+```text
+composer.json
+composer.lock
+```
+
+Ignored generated dependency directory:
+
+```text
+vendor/
+```
 
 ## Endpoints
 
@@ -26,9 +51,9 @@ Required dependencies:
 - `elonn_time` database
 - API auth service configured by `ELONN_API_BASE_URL`
 
-### Protected Calendar Endpoints
+### Protected JSON Endpoints
 
-All calendar endpoints require:
+JSON calendar and event endpoints require:
 
 ```text
 Authorization: Bearer <api-token>
@@ -73,21 +98,44 @@ Browser-facing routes:
 - `GET /events/new`
 - `POST /events`
 
-Time does not implement login or registration. Browser requests without a valid API auth cookie are redirected to:
+Templates live under:
+
+```text
+templates/layout.php
+templates/home.php
+templates/calendars/
+templates/events/
+```
+
+Time does not implement login or registration. Browser requests without a valid API auth cookie are redirected to the Elonn account surface:
 
 ```text
 http://elonn.local/account/login
 ```
 
-If the API auth cookie is available to `time.elonn.local`, Time validates it through `GET /identity/me` before rendering pages.
+Production redirects to:
+
+```text
+https://elonn.com/account/login
+```
+
+If the shared `elonn_api_token` cookie is available to `time.elonn.local` or `time.elonn.com`, Time validates it through `GET /identity/me` before rendering pages.
 
 ## Database
 
-The current database is:
+The local database is:
 
 ```text
 elonn_time
 ```
+
+The current production database on shared hosting is:
+
+```text
+ljholida_elonn_time
+```
+
+Use the database name that exists on the target host in `config/.env`.
 
 Identity ownership is stored as `identity_user_id VARCHAR(255)` using the same type shape returned by `api.elonn.com`.
 
@@ -124,10 +172,73 @@ Production:
 ELONN_API_BASE_URL=https://api.elonn.com
 ```
 
+Production database values should match the hosting account, for example:
+
+```env
+DB_NAME=ljholida_elonn_time
+```
+
 ## Boundary Rules
 
 - Time owns calendar data.
 - API owns shared identity.
 - Time validates bearer tokens only through API HTTP endpoints.
 - Time must not connect directly to `elonn_api`.
-- Do not add SabreDAV or CalDAV yet.
+- Time must not implement its own login or registration.
+- CalDAV should be implemented as an additional protocol surface without replacing existing browser or JSON routes.
+- Thunderbird-facing authentication must preserve the identity boundary and validate through the API, not by reading `elonn_api`.
+
+## Deployment
+
+Production shared hosting does not run Composer.
+
+Build dependencies locally before deploying:
+
+```bash
+composer install --no-dev --optimize-autoloader
+```
+
+The release artifact or upload must include:
+
+```text
+vendor/
+composer.json
+composer.lock
+```
+
+Do not commit `vendor/`. It is generated locally and deployed with the release artifact.
+
+## Verification
+
+Run migrations:
+
+```bash
+php scripts/migrate.php
+php scripts/migrate.php status
+```
+
+Run PHP syntax checks:
+
+```bash
+find public src templates -name '*.php' -print0 | xargs -0 -n1 php -l
+```
+
+Local URLs:
+
+```text
+http://time.elonn.local/health
+http://time.elonn.local/ready
+http://time.elonn.local/
+http://time.elonn.local/calendars
+http://time.elonn.local/events
+```
+
+Production URLs:
+
+```text
+https://time.elonn.com/health
+https://time.elonn.com/ready
+https://time.elonn.com/
+https://time.elonn.com/calendars
+https://time.elonn.com/events
+```

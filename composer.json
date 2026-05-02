@@ -1,0 +1,6 @@
+{
+    "license": "proprietary",
+    "require": {
+        "sabre/dav": "^4.7"
+    }
+}
