@@ -24,9 +24,11 @@ spl_autoload_register(static function (string $class): void {
     }
 });
 
+redirectToHttps();
+
 $envPath = BASE_PATH . '/config/.env';
 $env = Env::load($envPath);
-$apiBaseUrl = $env['ELONN_API_BASE_URL'] ?? 'http://api.elonn.local';
+$apiBaseUrl = $env['ELONN_API_BASE_URL'] ?? 'https://api.elonn.local';
 $router = new Router();
 
 $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
@@ -712,12 +714,46 @@ function redirect(string $path): void
     header('Location: ' . $path);
 }
 
+function redirectToHttps(): void
+{
+    if (currentScheme() === 'https') {
+        return;
+    }
+
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    if (!is_string($host) || $host === '') {
+        return;
+    }
+
+    $uri = $_SERVER['REQUEST_URI'] ?? '/';
+    http_response_code(308);
+    header('Location: https://' . $host . (is_string($uri) ? $uri : '/'));
+    exit;
+}
+
 function accountLoginUrl(): string
 {
     $host = $_SERVER['HTTP_HOST'] ?? '';
-    return str_contains((string) $host, 'elonn.local')
-        ? 'http://elonn.local/account/login'
+    $loginUrl = str_contains((string) $host, 'elonn.local')
+        ? currentScheme() . '://elonn.local/account/login'
         : 'https://elonn.com/account/login';
+
+    return $loginUrl . '?return_to=' . rawurlencode(currentUrl());
+}
+
+function currentScheme(): string
+{
+    return ($_SERVER['HTTPS'] ?? '') === 'on'
+        || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'
+        ? 'https'
+        : 'http';
+}
+
+function currentUrl(): string
+{
+    $host = $_SERVER['HTTP_HOST'] ?? 'time.elonn.local';
+    $uri = $_SERVER['REQUEST_URI'] ?? '/';
+    return currentScheme() . '://' . $host . $uri;
 }
 
 /**
