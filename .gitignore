@@ -1,7 +1,7 @@
-config/.env
-vendor/
+.env
+composer.phar
+node_modules/
 storage/logs/*
 !storage/logs/.gitkeep
 error_log
 public/error_log
-

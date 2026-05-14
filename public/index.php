@@ -4,31 +4,21 @@ declare(strict_types=1);
 
 use Elonn\Time\ApiAuthClient;
 use Elonn\Time\Database;
-use Elonn\Time\Env;
 use Elonn\Time\Response;
 use Elonn\Time\Router;
 use Elonn\Time\View;
+use Dotenv\Dotenv;
 
 define('BASE_PATH', dirname(__DIR__));
 
-spl_autoload_register(static function (string $class): void {
-    $prefix = 'Elonn\\Time\\';
-    if (!str_starts_with($class, $prefix)) {
-        return;
-    }
+require BASE_PATH . '/vendor/autoload.php';
 
-    $relativeClass = substr($class, strlen($prefix));
-    $path = BASE_PATH . '/src/' . str_replace('\\', '/', $relativeClass) . '.php';
-    if (is_file($path)) {
-        require $path;
-    }
-});
+Dotenv::createImmutable(BASE_PATH)->safeLoad();
+$config = require BASE_PATH . '/config/config.php';
 
 redirectToHttps();
 
-$envPath = BASE_PATH . '/config/.env';
-$env = Env::load($envPath);
-$apiBaseUrl = $env['ELONN_API_BASE_URL'] ?? 'https://api.elonn.local';
+$apiBaseUrl = $config['services']['api_base_url'];
 $router = new Router();
 
 $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
@@ -44,14 +34,14 @@ $router->get('/health', static function (): void {
     ]);
 });
 
-$router->get('/ready', static function () use ($envPath, $apiBaseUrl): void {
+$router->get('/ready', static function () use ($config, $apiBaseUrl): void {
     $dependencies = [
         'database' => 'error',
         'api_auth' => 'error',
     ];
 
     try {
-        timePdo($envPath)->query('SELECT 1');
+        timePdo($config)->query('SELECT 1');
         $dependencies['database'] = 'connected';
     } catch (Throwable) {
         $dependencies['database'] = 'error';
@@ -75,26 +65,26 @@ $router->get('/ready', static function () use ($envPath, $apiBaseUrl): void {
     ], $ready ? 200 : 500);
 });
 
-$router->get('/', static function () use ($envPath, $apiBaseUrl): void {
+$router->get('/', static function () use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $pdo = timePdo($envPath);
+    $pdo = timePdo($config);
     renderApp('Dashboard', 'home.php', $identity, [
         'calendars' => listCalendars($pdo, $identity['id']),
         'events' => listEvents($pdo, $identity['id'], null),
     ]);
 });
 
-$router->get('/calendars', static function () use ($envPath, $apiBaseUrl): void {
+$router->get('/calendars', static function () use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $calendars = listCalendars(timePdo($envPath), $identity['id']);
+    $calendars = listCalendars(timePdo($config), $identity['id']);
 
     if (isBrowserRequest()) {
         renderApp('Calendars', 'calendars/index.php', $identity, ['calendars' => $calendars]);
@@ -116,7 +106,7 @@ $router->get('/calendars/new', static function () use ($apiBaseUrl): void {
     ]);
 });
 
-$router->post('/calendars', static function () use ($envPath, $apiBaseUrl): void {
+$router->post('/calendars', static function () use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
@@ -141,7 +131,7 @@ $router->post('/calendars', static function () use ($envPath, $apiBaseUrl): void
     $timezone = cleanOptionalString($input['timezone'] ?? null);
     $now = now();
 
-    $stmt = timePdo($envPath)->prepare(
+    $stmt = timePdo($config)->prepare(
         "INSERT INTO time_calendars (identity_user_id, name, color, timezone, status, created_at, updated_at)
          VALUES (:identity_user_id, :name, :color, :timezone, 'active', :created_at, NULL)"
     );
@@ -153,7 +143,7 @@ $router->post('/calendars', static function () use ($envPath, $apiBaseUrl): void
         ':created_at' => $now,
     ]);
 
-    $calendar = findCalendar(timePdo($envPath), $identity['id'], (int) timePdo($envPath)->lastInsertId());
+    $calendar = findCalendar(timePdo($config), $identity['id'], (int) timePdo($config)->lastInsertId());
 
     if (isBrowserRequest()) {
         redirect('/calendars');
@@ -163,13 +153,13 @@ $router->post('/calendars', static function () use ($envPath, $apiBaseUrl): void
     Response::json(['calendar' => calendarPayload($calendar)], 201);
 });
 
-$router->get('/calendars/{id}', static function (array $params) use ($envPath, $apiBaseUrl): void {
+$router->get('/calendars/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $calendar = findCalendar(timePdo($envPath), $identity['id'], positiveInt($params['id'] ?? null));
+    $calendar = findCalendar(timePdo($config), $identity['id'], positiveInt($params['id'] ?? null));
     if ($calendar === null) {
         Response::json(['error' => 'Calendar not found.'], 404);
         return;
@@ -178,13 +168,13 @@ $router->get('/calendars/{id}', static function (array $params) use ($envPath, $
     Response::json(['calendar' => calendarPayload($calendar)]);
 });
 
-$router->patch('/calendars/{id}', static function (array $params) use ($envPath, $apiBaseUrl): void {
+$router->patch('/calendars/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $pdo = timePdo($envPath);
+    $pdo = timePdo($config);
     $calendarId = positiveInt($params['id'] ?? null);
     $calendar = findCalendar($pdo, $identity['id'], $calendarId);
     if ($calendar === null) {
@@ -225,13 +215,13 @@ $router->patch('/calendars/{id}', static function (array $params) use ($envPath,
     Response::json(['calendar' => calendarPayload(findCalendar($pdo, $identity['id'], $calendarId))]);
 });
 
-$router->delete('/calendars/{id}', static function (array $params) use ($envPath, $apiBaseUrl): void {
+$router->delete('/calendars/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $pdo = timePdo($envPath);
+    $pdo = timePdo($config);
     $calendarId = positiveInt($params['id'] ?? null);
     $calendar = findCalendar($pdo, $identity['id'], $calendarId);
     if ($calendar === null) {
@@ -253,14 +243,14 @@ $router->delete('/calendars/{id}', static function (array $params) use ($envPath
     Response::json(['status' => 'deleted']);
 });
 
-$router->get('/events', static function () use ($envPath, $apiBaseUrl): void {
+$router->get('/events', static function () use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
     $calendarId = positiveInt($_GET['calendar_id'] ?? null);
-    $events = listEvents(timePdo($envPath), $identity['id'], $calendarId);
+    $events = listEvents(timePdo($config), $identity['id'], $calendarId);
 
     if (isBrowserRequest()) {
         renderApp('Events', 'events/index.php', $identity, ['events' => $events]);
@@ -270,7 +260,7 @@ $router->get('/events', static function () use ($envPath, $apiBaseUrl): void {
     Response::json(['events' => array_map('eventPayload', $events)]);
 });
 
-$router->get('/events/new', static function () use ($envPath, $apiBaseUrl): void {
+$router->get('/events/new', static function () use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
@@ -279,17 +269,17 @@ $router->get('/events/new', static function () use ($envPath, $apiBaseUrl): void
     renderApp('New event', 'events/new.php', $identity, [
         'error' => null,
         'old' => [],
-        'calendars' => listCalendars(timePdo($envPath), $identity['id']),
+        'calendars' => listCalendars(timePdo($config), $identity['id']),
     ]);
 });
 
-$router->post('/events', static function () use ($envPath, $apiBaseUrl): void {
+$router->post('/events', static function () use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $pdo = timePdo($envPath);
+    $pdo = timePdo($config);
     $input = requestInput();
     $calendarId = positiveInt($input['calendar_id'] ?? null);
     $title = cleanString($input['title'] ?? null);
@@ -367,13 +357,13 @@ $router->post('/events', static function () use ($envPath, $apiBaseUrl): void {
     Response::json(['event' => eventPayload($event)], 201);
 });
 
-$router->get('/events/{id}', static function (array $params) use ($envPath, $apiBaseUrl): void {
+$router->get('/events/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $event = findEvent(timePdo($envPath), $identity['id'], positiveInt($params['id'] ?? null));
+    $event = findEvent(timePdo($config), $identity['id'], positiveInt($params['id'] ?? null));
     if ($event === null) {
         Response::json(['error' => 'Event not found.'], 404);
         return;
@@ -382,13 +372,13 @@ $router->get('/events/{id}', static function (array $params) use ($envPath, $api
     Response::json(['event' => eventPayload($event)]);
 });
 
-$router->patch('/events/{id}', static function (array $params) use ($envPath, $apiBaseUrl): void {
+$router->patch('/events/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $pdo = timePdo($envPath);
+    $pdo = timePdo($config);
     $eventId = positiveInt($params['id'] ?? null);
     $event = findEvent($pdo, $identity['id'], $eventId);
     if ($event === null) {
@@ -454,13 +444,13 @@ $router->patch('/events/{id}', static function (array $params) use ($envPath, $a
     Response::json(['event' => eventPayload(findEvent($pdo, $identity['id'], $eventId))]);
 });
 
-$router->delete('/events/{id}', static function (array $params) use ($envPath, $apiBaseUrl): void {
+$router->delete('/events/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
         return;
     }
 
-    $pdo = timePdo($envPath);
+    $pdo = timePdo($config);
     $eventId = positiveInt($params['id'] ?? null);
     $event = findEvent($pdo, $identity['id'], $eventId);
     if ($event === null) {
@@ -487,7 +477,10 @@ $router->dispatch(
     $requestPath
 );
 
-function timePdo(string $envPath): PDO
+/**
+ * @param array{database: array{driver:string, host:string, port:int, name:string, username:string, password:string, charset:string}} $config
+ */
+function timePdo(array $config): PDO
 {
     static $pdo = null;
 
@@ -495,7 +488,7 @@ function timePdo(string $envPath): PDO
         return $pdo;
     }
 
-    $pdo = Database::fromEnv($envPath)->pdo();
+    $pdo = Database::connect($config['database'])->pdo();
     return $pdo;
 }
 

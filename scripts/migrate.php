@@ -3,21 +3,14 @@
 declare(strict_types=1);
 
 use Elonn\Time\Database;
+use Dotenv\Dotenv;
 
 define('BASE_PATH', dirname(__DIR__));
 
-spl_autoload_register(static function (string $class): void {
-    $prefix = 'Elonn\\Time\\';
-    if (!str_starts_with($class, $prefix)) {
-        return;
-    }
+require BASE_PATH . '/vendor/autoload.php';
 
-    $relativeClass = substr($class, strlen($prefix));
-    $path = BASE_PATH . '/src/' . str_replace('\\', '/', $relativeClass) . '.php';
-    if (is_file($path)) {
-        require $path;
-    }
-});
+Dotenv::createImmutable(BASE_PATH)->safeLoad();
+$config = require BASE_PATH . '/config/config.php';
 
 $command = $argv[1] ?? 'up';
 if (!in_array($command, ['up', 'status'], true)) {
@@ -25,7 +18,7 @@ if (!in_array($command, ['up', 'status'], true)) {
     exit(1);
 }
 
-$pdo = Database::fromEnv(BASE_PATH . '/config/.env')->pdo();
+$pdo = Database::connect($config['database'])->pdo();
 $migrationsPath = BASE_PATH . '/migrations';
 
 $pdo->exec(

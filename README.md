@@ -177,7 +177,7 @@ The current production database on shared hosting is:
 ljholida_elonn_time
 ```
 
-Use the database name that exists on the target host in `config/.env`.
+Use the database name that exists on the target host in `.env`.
 
 Identity ownership is stored as `identity_user_id VARCHAR(255)` using the same type shape returned by `api.elonn.com`.
 
@@ -200,25 +200,33 @@ php scripts/migrate.php status
 
 ## Configuration
 
-Create `config/.env` from `config/.env.example`.
+Create `.env` from `.env.example`.
 
 Development:
 
 ```env
-ELONN_API_BASE_URL=http://api.elonn.local
+APP_ENV=local
+APP_URL=https://time.elonn.local
+DB_DATABASE=elonn_time
+DB_USERNAME=elonn_time
+ELONN_API_BASE_URL=https://api.elonn.local
 ```
 
 Production:
 
 ```env
+APP_ENV=production
+APP_URL=https://time.elonn.com
 ELONN_API_BASE_URL=https://api.elonn.com
 ```
 
 Production database values should match the hosting account, for example:
 
 ```env
-DB_NAME=ljholida_elonn_time
+DB_DATABASE=ljholida_elonn_time
 ```
+
+`public/index.php` and `scripts/migrate.php` load `vendor/autoload.php` and `vlucas/phpdotenv`. `config/config.php` is the only layer that reads deployment environment values and returns normalized config arrays to the application.
 
 ## Boundary Rules
 
