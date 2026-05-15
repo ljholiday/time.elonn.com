@@ -35,7 +35,7 @@ $shareImage = 'https://elonn.com/assets/img/elonn-logo.png';
         gtag('js', new Date());
         gtag('config', 'G-LNJE3CGYKC');
     </script>
-    <link rel="stylesheet" href="/assets/time.css">
+    <link rel="stylesheet" href="/assets/css/time.css">
 </head>
 <body>
 <div class="time-shell">

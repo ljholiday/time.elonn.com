@@ -85,7 +85,7 @@ Current endpoints:
 The service includes a minimal server-rendered frontend using plain PHP templates and shared CSS from:
 
 ```text
-public/assets/time.css
+public/assets/css/time.css
 ```
 
 Browser-facing routes:
