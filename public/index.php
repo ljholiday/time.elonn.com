@@ -78,6 +78,114 @@ $router->get('/', static function () use ($config, $apiBaseUrl): void {
     ]);
 });
 
+$router->get('/runtime/panel/time', static function () use ($config, $apiBaseUrl): void {
+    allowRuntimeOrigin();
+
+    $identity = runtimeIdentity($apiBaseUrl);
+    if ($identity === null) {
+        runtimePanel('Time', '<p class="runtime-time__empty">Authentication required.</p>', 401);
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $calendars = listCalendars($pdo, $identity['id']);
+    $events = array_slice(listEvents($pdo, $identity['id'], null), 0, 6);
+
+    ob_start();
+    ?>
+    <div class="runtime-time">
+        <header class="runtime-time__header">
+            <div>
+                <p>Signed in as</p>
+                <strong><?= html((string) ($identity['display_name'] ?: $identity['email'])) ?></strong>
+            </div>
+            <span><?= html((string) $identity['email']) ?></span>
+        </header>
+
+        <section class="runtime-time__section">
+            <h2>Calendars</h2>
+            <?php if ($calendars === []): ?>
+                <p class="runtime-time__empty">No calendars yet.</p>
+            <?php else: ?>
+                <ul class="runtime-time__list">
+                    <?php foreach ($calendars as $calendar): ?>
+                        <li>
+                            <strong><?= html((string) $calendar['name']) ?></strong>
+                            <span><?= html((string) ($calendar['timezone'] ?: 'No timezone set')) ?></span>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+        </section>
+
+        <section class="runtime-time__section">
+            <h2>Upcoming Events</h2>
+            <?php if ($events === []): ?>
+                <p class="runtime-time__empty">No events yet.</p>
+            <?php else: ?>
+                <ul class="runtime-time__list">
+                    <?php foreach ($events as $event): ?>
+                        <li>
+                            <strong><?= html((string) $event['title']) ?></strong>
+                            <span><?= html(formatRuntimeEventRange($event)) ?></span>
+                        </li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
+        </section>
+
+        <form class="runtime-time__form" data-time-create-calendar>
+            <h2>Create Calendar</h2>
+            <label>
+                <span>Name</span>
+                <input name="name" required maxlength="255" autocomplete="off">
+            </label>
+            <label>
+                <span>Timezone</span>
+                <input name="timezone" placeholder="America/Los_Angeles" maxlength="64" autocomplete="off">
+            </label>
+            <button type="submit">Create</button>
+            <p data-time-form-status></p>
+        </form>
+    </div>
+    <?php
+
+    runtimePanel('Time', (string) ob_get_clean());
+});
+
+$router->post('/runtime/calendars', static function () use ($config, $apiBaseUrl): void {
+    allowRuntimeOrigin();
+
+    $identity = runtimeIdentity($apiBaseUrl);
+    if ($identity === null) {
+        Response::json(['error' => 'Authentication required.'], 401);
+        return;
+    }
+
+    $input = requestInput();
+    $name = cleanString($input['name'] ?? null);
+    if ($name === null) {
+        Response::json(['error' => 'Calendar name is required.'], 400);
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $stmt = $pdo->prepare(
+        "INSERT INTO time_calendars (identity_user_id, name, color, timezone, status, created_at, updated_at)
+         VALUES (:identity_user_id, :name, NULL, :timezone, 'active', :created_at, NULL)"
+    );
+    $stmt->execute([
+        ':identity_user_id' => $identity['id'],
+        ':name' => $name,
+        ':timezone' => cleanOptionalString($input['timezone'] ?? null),
+        ':created_at' => now(),
+    ]);
+
+    Response::json([
+        'calendar' => calendarPayload(findCalendar($pdo, $identity['id'], (int) $pdo->lastInsertId())),
+    ], 201);
+});
+
 $router->get('/calendars', static function () use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
@@ -527,6 +635,23 @@ function requireIdentity(string $apiBaseUrl): ?array
     return $identity;
 }
 
+/**
+ * @return array{id: string, email: string, display_name: string|null}|null
+ */
+function runtimeIdentity(string $apiBaseUrl): ?array
+{
+    $token = bearerToken() ?? cookieToken();
+    if ($token === null) {
+        return null;
+    }
+
+    try {
+        return (new ApiAuthClient($apiBaseUrl))->identityForToken($token);
+    } catch (Throwable) {
+        return null;
+    }
+}
+
 function isDavPath(string $path): bool
 {
     $path = '/' . trim($path, '/');
@@ -705,6 +830,55 @@ function redirect(string $path): void
 {
     http_response_code(303);
     header('Location: ' . $path);
+}
+
+function runtimePanel(string $title, string $body, int $status = 200): void
+{
+    http_response_code($status);
+    header('Content-Type: text/html; charset=utf-8');
+
+    ?>
+    <section class="runtime-panel-fragment" aria-label="<?= html($title) ?>">
+        <?= $body ?>
+    </section>
+    <?php
+}
+
+/**
+ * @param array<string, mixed> $event
+ */
+function formatRuntimeEventRange(array $event): string
+{
+    try {
+        $startsAt = new DateTimeImmutable((string) $event['starts_at']);
+        $endsAt = new DateTimeImmutable((string) $event['ends_at']);
+    } catch (Throwable) {
+        return (string) $event['starts_at'];
+    }
+
+    return $startsAt->format('M j, g:i A') . ' - ' . $endsAt->format('g:i A');
+}
+
+function html(string $value): string
+{
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function allowRuntimeOrigin(): void
+{
+    $origin = (string) ($_SERVER['HTTP_ORIGIN'] ?? '');
+    $allowed = [
+        'https://web.elonn.local',
+        'https://web.elonn.com',
+        'https://world.elonn.local',
+        'https://world.elonn.com',
+    ];
+
+    if (in_array($origin, $allowed, true)) {
+        header('Access-Control-Allow-Origin: ' . $origin);
+        header('Vary: Origin');
+        header('Access-Control-Allow-Credentials: true');
+    }
 }
 
 function redirectToHttps(): void
