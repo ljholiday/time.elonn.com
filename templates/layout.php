@@ -28,6 +28,13 @@ $shareImage = 'https://elonn.com/assets/img/elonn-logo.png';
     <meta property="og:image:width" content="1024">
     <meta property="og:image:height" content="1024">
     <meta property="og:image:alt" content="Elonn logo">
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-LNJE3CGYKC"></script>
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-LNJE3CGYKC');
+    </script>
     <link rel="stylesheet" href="/assets/time.css">
 </head>
 <body>
