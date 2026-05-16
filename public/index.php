@@ -90,6 +90,23 @@ $router->get('/runtime/panel/time', static function () use ($config, $apiBaseUrl
     $pdo = timePdo($config);
     $calendars = listCalendars($pdo, $identity['id']);
     $events = array_slice(listEvents($pdo, $identity['id'], null), 0, 6);
+    $wantsJson = str_contains((string) ($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json')
+        || str_contains((string) ($_GET['format'] ?? ''), 'json');
+
+    if ($wantsJson) {
+        Response::json([
+            'kind' => 'time',
+            'view' => 'time',
+            'title' => 'Time',
+            'identity' => $identity,
+            'calendars' => array_map('calendarPayload', $calendars),
+            'events' => array_map('eventPayload', $events),
+            'actions' => [
+                'create_calendar' => '/world/calendars',
+            ],
+        ]);
+        return;
+    }
 
     ob_start();
     ?>
