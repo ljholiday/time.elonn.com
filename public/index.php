@@ -48,7 +48,7 @@ $router->get('/ready', static function () use ($config, $apiBaseUrl): void {
     }
 
     try {
-        if ((new ApiAuthClient($apiBaseUrl))->ready()) {
+        if (apiAuthClient($apiBaseUrl)->ready()) {
             $dependencies['api_auth'] = 'connected';
         }
     } catch (Throwable) {
@@ -634,7 +634,7 @@ function requireIdentity(string $apiBaseUrl): ?array
     }
 
     try {
-        $identity = (new ApiAuthClient($apiBaseUrl))->identityForToken($token);
+        $identity = apiAuthClient($apiBaseUrl)->identityForToken($token);
     } catch (Throwable) {
         $identity = null;
     }
@@ -663,7 +663,7 @@ function runtimeIdentity(string $apiBaseUrl): ?array
     }
 
     try {
-        return (new ApiAuthClient($apiBaseUrl))->identityForToken($token);
+        return apiAuthClient($apiBaseUrl)->identityForToken($token);
     } catch (Throwable) {
         return null;
     }
@@ -684,7 +684,7 @@ function handleDavRequest(string $apiBaseUrl): void
     }
 
     try {
-        $identity = (new ApiAuthClient($apiBaseUrl))->identityForDavCredentials(
+        $identity = apiAuthClient($apiBaseUrl)->identityForDavCredentials(
             $credentials['username'],
             $credentials['password']
         );
@@ -1142,4 +1142,16 @@ function eventPayload(?array $event): array
         'created_at' => (string) $event['created_at'],
         'updated_at' => $event['updated_at'] === null ? null : (string) $event['updated_at'],
     ];
+}
+
+function apiAuthClient(string $apiBaseUrl): ApiAuthClient
+{
+    static $clients = [];
+    $apiBaseUrl = rtrim($apiBaseUrl, '/');
+
+    if (!isset($clients[$apiBaseUrl])) {
+        $clients[$apiBaseUrl] = new ApiAuthClient($apiBaseUrl);
+    }
+
+    return $clients[$apiBaseUrl];
 }
