@@ -43,7 +43,8 @@ $router->get('/ready', static function () use ($config, $apiBaseUrl): void {
     try {
         timePdo($config)->query('SELECT 1');
         $dependencies['database'] = 'connected';
-    } catch (Throwable) {
+    } catch (Throwable $e) {
+        error_log('[time] /ready DB check failed: ' . $e->getMessage());
         $dependencies['database'] = 'error';
     }
 
@@ -51,7 +52,8 @@ $router->get('/ready', static function () use ($config, $apiBaseUrl): void {
         if (apiAuthClient($apiBaseUrl)->ready()) {
             $dependencies['api_auth'] = 'connected';
         }
-    } catch (Throwable) {
+    } catch (Throwable $e) {
+        error_log('[time] /ready API auth check failed: ' . $e->getMessage());
         $dependencies['api_auth'] = 'error';
     }
 
@@ -635,7 +637,8 @@ function requireIdentity(string $apiBaseUrl): ?array
 
     try {
         $identity = apiAuthClient($apiBaseUrl)->identityForToken($token);
-    } catch (Throwable) {
+    } catch (Throwable $e) {
+        error_log('[time] identity token verification failed: ' . $e->getMessage());
         $identity = null;
     }
 
@@ -664,7 +667,8 @@ function runtimeIdentity(string $apiBaseUrl): ?array
 
     try {
         return apiAuthClient($apiBaseUrl)->identityForToken($token);
-    } catch (Throwable) {
+    } catch (Throwable $e) {
+        error_log('[time] runtime identity check failed: ' . $e->getMessage());
         return null;
     }
 }
@@ -688,7 +692,8 @@ function handleDavRequest(string $apiBaseUrl): void
             $credentials['username'],
             $credentials['password']
         );
-    } catch (Throwable) {
+    } catch (Throwable $e) {
+        error_log('[time] DAV identity check failed: ' . $e->getMessage());
         $identity = null;
     }
 
