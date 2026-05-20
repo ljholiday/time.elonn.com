@@ -1,0 +1,3 @@
+ALTER TABLE time_events
+    MODIFY COLUMN starts_at DATETIME NULL,
+    MODIFY COLUMN ends_at DATETIME NULL;

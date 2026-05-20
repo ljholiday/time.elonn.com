@@ -18,12 +18,19 @@ $events = $data['events'] ?? [];
             <article class="time-card">
                 <h2><?= htmlspecialchars((string) $event['title'], ENT_QUOTES, 'UTF-8') ?></h2>
                 <p class="time-meta">
-                    <?= htmlspecialchars((string) $event['starts_at'], ENT_QUOTES, 'UTF-8') ?>
-                    to
-                    <?= htmlspecialchars((string) $event['ends_at'], ENT_QUOTES, 'UTF-8') ?>
+                    <?php if (($event['starts_at'] ?? null) !== null || ($event['ends_at'] ?? null) !== null): ?>
+                        <?= htmlspecialchars((string) ($event['starts_at'] ?? ''), ENT_QUOTES, 'UTF-8') ?>
+                        to
+                        <?= htmlspecialchars((string) ($event['ends_at'] ?? ''), ENT_QUOTES, 'UTF-8') ?>
+                    <?php else: ?>
+                        No time set.
+                    <?php endif; ?>
                 </p>
                 <?php if (($event['location'] ?? null) !== null): ?>
                     <p class="time-meta"><?= htmlspecialchars((string) $event['location'], ENT_QUOTES, 'UTF-8') ?></p>
+                <?php endif; ?>
+                <?php if (($event['source'] ?? null) !== null): ?>
+                    <p class="time-meta">Imported from <?= htmlspecialchars((string) ($event['source']['service'] ?? 'source'), ENT_QUOTES, 'UTF-8') ?></p>
                 <?php endif; ?>
             </article>
         <?php endforeach; ?>

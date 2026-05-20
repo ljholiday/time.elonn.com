@@ -67,6 +67,31 @@ $router->get('/ready', static function () use ($config, $apiBaseUrl): void {
     ], $ready ? 200 : 500);
 });
 
+$router->post('/integrations/social/events', static function () use ($config): void {
+    if (!requireSocialIngestToken($config)) {
+        Response::json(['error' => 'Forbidden.'], 403);
+        return;
+    }
+
+    $input = requestInput();
+    $identityUserId = cleanString($input['identity_user_id'] ?? null);
+    $eventInput = is_array($input['event'] ?? null) ? $input['event'] : null;
+    if ($identityUserId === null || $eventInput === null) {
+        Response::json(['error' => 'identity_user_id and event are required.'], 400);
+        return;
+    }
+
+    try {
+        $pdo = timePdo($config);
+        $calendar = ensureSocialImportCalendar($pdo, $config, $identityUserId);
+        $event = upsertSocialEvent($pdo, $config, $calendar, $identityUserId, $eventInput);
+        Response::json(['calendar' => calendarPayload($calendar), 'event' => eventPayload($event)], 201);
+    } catch (Throwable $throwable) {
+        error_log('[time] social event ingest failed: ' . $throwable->getMessage());
+        Response::json(['error' => 'Unable to ingest social event.'], 500);
+    }
+});
+
 $router->get('/', static function () use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
@@ -1020,7 +1045,7 @@ function now(): string
 function listCalendars(PDO $pdo, string $identityUserId): array
 {
     $stmt = $pdo->prepare(
-        "SELECT id, name, color, timezone, status, created_at, updated_at
+        "SELECT id, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
          FROM time_calendars
          WHERE identity_user_id = :identity_user_id
            AND status <> 'deleted'
@@ -1036,7 +1061,7 @@ function listCalendars(PDO $pdo, string $identityUserId): array
  */
 function listEvents(PDO $pdo, string $identityUserId, ?int $calendarId): array
 {
-    $sql = "SELECT id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, created_at, updated_at
+    $sql = "SELECT id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
             FROM time_events
             WHERE identity_user_id = :identity_user_id
               AND status <> 'deleted'";
@@ -1064,7 +1089,7 @@ function findCalendar(PDO $pdo, string $identityUserId, ?int $id): ?array
     }
 
     $stmt = $pdo->prepare(
-        "SELECT id, name, color, timezone, status, created_at, updated_at
+        "SELECT id, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
          FROM time_calendars
          WHERE id = :id AND identity_user_id = :identity_user_id AND status <> 'deleted'
          LIMIT 1"
@@ -1088,7 +1113,7 @@ function findEvent(PDO $pdo, string $identityUserId, ?int $id): ?array
     }
 
     $stmt = $pdo->prepare(
-        "SELECT id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, created_at, updated_at
+        "SELECT id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
          FROM time_events
          WHERE id = :id AND identity_user_id = :identity_user_id AND status <> 'deleted'
          LIMIT 1"
@@ -1118,6 +1143,7 @@ function calendarPayload(?array $calendar): array
         'color' => $calendar['color'] === null ? null : (string) $calendar['color'],
         'timezone' => $calendar['timezone'] === null ? null : (string) $calendar['timezone'],
         'status' => (string) $calendar['status'],
+        'source' => calendarSourcePayload($calendar),
         'created_at' => (string) $calendar['created_at'],
         'updated_at' => $calendar['updated_at'] === null ? null : (string) $calendar['updated_at'],
     ];
@@ -1139,14 +1165,185 @@ function eventPayload(?array $event): array
         'title' => (string) $event['title'],
         'description' => $event['description'] === null ? null : (string) $event['description'],
         'location' => $event['location'] === null ? null : (string) $event['location'],
-        'starts_at' => (string) $event['starts_at'],
-        'ends_at' => (string) $event['ends_at'],
+        'starts_at' => $event['starts_at'] === null ? null : (string) $event['starts_at'],
+        'ends_at' => $event['ends_at'] === null ? null : (string) $event['ends_at'],
         'timezone' => $event['timezone'] === null ? null : (string) $event['timezone'],
         'all_day' => (bool) $event['all_day'],
         'status' => (string) $event['status'],
+        'source' => eventSourcePayload($event),
         'created_at' => (string) $event['created_at'],
         'updated_at' => $event['updated_at'] === null ? null : (string) $event['updated_at'],
     ];
+}
+
+/**
+ * @param array<string, mixed> $calendar
+ * @return array<string, mixed>|null
+ */
+function calendarSourcePayload(array $calendar): ?array
+{
+    if (($calendar['source_service'] ?? null) === null && ($calendar['source_object_type'] ?? null) === null && ($calendar['source_object_id'] ?? null) === null) {
+        return null;
+    }
+
+    return [
+        'service' => $calendar['source_service'] === null ? null : (string) $calendar['source_service'],
+        'object_type' => $calendar['source_object_type'] === null ? null : (string) $calendar['source_object_type'],
+        'object_id' => $calendar['source_object_id'] === null ? null : (string) $calendar['source_object_id'],
+        'url' => $calendar['source_url'] === null ? null : (string) $calendar['source_url'],
+    ];
+}
+
+/**
+ * @param array<string, mixed> $event
+ * @return array<string, mixed>|null
+ */
+function eventSourcePayload(array $event): ?array
+{
+    if (($event['source_service'] ?? null) === null && ($event['source_object_type'] ?? null) === null && ($event['source_object_id'] ?? null) === null) {
+        return null;
+    }
+
+    return [
+        'service' => $event['source_service'] === null ? null : (string) $event['source_service'],
+        'object_type' => $event['source_object_type'] === null ? null : (string) $event['source_object_type'],
+        'object_id' => $event['source_object_id'] === null ? null : (string) $event['source_object_id'],
+        'url' => $event['source_url'] === null ? null : (string) $event['source_url'],
+    ];
+}
+
+function requireSocialIngestToken(array $config): bool
+{
+    $configured = trim((string) ($config['services']['social_ingest_token'] ?? ''));
+    if ($configured === '') {
+        error_log('[time] social ingest token not configured');
+        return false;
+    }
+
+    $header = $_SERVER['HTTP_X_ELONN_SOCIAL_INGEST_TOKEN'] ?? '';
+    return is_string($header) && hash_equals($configured, trim($header));
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function ensureSocialImportCalendar(PDO $pdo, array $config, string $identityUserId): array
+{
+    $socialBaseUrl = rtrim((string) ($config['services']['social_base_url'] ?? 'https://social.elonn.com'), '/');
+    $stmt = $pdo->prepare(
+        "SELECT id, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
+         FROM time_calendars
+         WHERE identity_user_id = :identity_user_id
+           AND source_service = 'social'
+           AND source_object_type = 'event_feed'
+           AND source_object_id = 'default'
+         LIMIT 1"
+    );
+    $stmt->execute([':identity_user_id' => $identityUserId]);
+    $calendar = $stmt->fetch();
+    if (is_array($calendar)) {
+        if ((string) ($calendar['source_url'] ?? '') !== $socialBaseUrl . '/social/events') {
+            $pdo->prepare(
+                "UPDATE time_calendars
+                 SET source_url = :source_url, updated_at = :updated_at
+                 WHERE id = :id AND identity_user_id = :identity_user_id"
+            )->execute([
+                ':source_url' => $socialBaseUrl . '/social/events',
+                ':updated_at' => now(),
+                ':id' => (int) $calendar['id'],
+                ':identity_user_id' => $identityUserId,
+            ]);
+            $calendar['source_url'] = $socialBaseUrl . '/social/events';
+            $calendar['updated_at'] = now();
+        }
+        return $calendar;
+    }
+
+    $now = now();
+    $insert = $pdo->prepare(
+        "INSERT INTO time_calendars
+            (identity_user_id, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at)
+         VALUES
+            (:identity_user_id, :name, :color, :timezone, 'active', 'social', 'event_feed', 'default', :source_url, :created_at, NULL)
+         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
+    );
+    $insert->execute([
+        ':identity_user_id' => $identityUserId,
+        ':name' => 'Social events',
+        ':color' => '#7c9cff',
+        ':timezone' => null,
+        ':source_url' => $socialBaseUrl . '/social/events',
+        ':created_at' => $now,
+    ]);
+
+    return findCalendar($pdo, $identityUserId, (int) $pdo->lastInsertId()) ?? [];
+}
+
+/**
+ * @param array<string, mixed> $calendar
+ * @param array<string, mixed> $eventInput
+ * @return array<string, mixed>
+ */
+function upsertSocialEvent(PDO $pdo, array $config, array $calendar, string $identityUserId, array $eventInput): array
+{
+    $sourceObjectId = cleanString($eventInput['source_object_id'] ?? null);
+    if ($sourceObjectId === null && array_key_exists('id', $eventInput) && (is_string($eventInput['id']) || is_int($eventInput['id']))) {
+        $sourceObjectId = trim((string) $eventInput['id']);
+    }
+    $title = cleanString($eventInput['title'] ?? null);
+    if ($sourceObjectId === null || $title === null) {
+        throw new InvalidArgumentException('Social event id and title are required.');
+    }
+
+    $status = cleanString($eventInput['status'] ?? null) ?? 'active';
+    if (!in_array($status, ['active', 'cancelled', 'deleted'], true)) {
+        $status = 'active';
+    }
+
+    $allDay = truthy($eventInput['all_day'] ?? false);
+    $startsAt = normalizeDateTime($eventInput['starts_at'] ?? null);
+    $endsAt = normalizeDateTime($eventInput['ends_at'] ?? null);
+    $timezone = cleanOptionalString($eventInput['timezone'] ?? null);
+    $location = cleanOptionalString($eventInput['location'] ?? null);
+    $description = cleanOptionalString($eventInput['description'] ?? $eventInput['summary'] ?? null);
+    $sourceUrl = cleanOptionalString($eventInput['source_url'] ?? null) ?? ((string) ($config['services']['social_base_url'] ?? 'https://social.elonn.com')) . '/social/events/' . $sourceObjectId;
+
+    $stmt = $pdo->prepare(
+        "INSERT INTO time_events
+            (identity_user_id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at)
+         VALUES
+            (:identity_user_id, :calendar_id, :title, :description, :location, :starts_at, :ends_at, :timezone, :all_day, :status, 'social', 'event', :source_object_id, :source_url, :created_at, NULL)
+         ON DUPLICATE KEY UPDATE
+            id = LAST_INSERT_ID(id),
+            calendar_id = VALUES(calendar_id),
+            title = VALUES(title),
+            description = VALUES(description),
+            location = VALUES(location),
+            starts_at = VALUES(starts_at),
+            ends_at = VALUES(ends_at),
+            timezone = VALUES(timezone),
+            all_day = VALUES(all_day),
+            status = VALUES(status),
+            source_url = VALUES(source_url),
+            updated_at = VALUES(created_at)"
+    );
+    $stmt->execute([
+        ':identity_user_id' => $identityUserId,
+        ':calendar_id' => (int) $calendar['id'],
+        ':title' => $title,
+        ':description' => $description,
+        ':location' => $location,
+        ':starts_at' => $startsAt,
+        ':ends_at' => $endsAt,
+        ':timezone' => $timezone,
+        ':all_day' => $allDay ? 1 : 0,
+        ':status' => $status,
+        ':source_object_id' => $sourceObjectId,
+        ':source_url' => $sourceUrl,
+        ':created_at' => now(),
+    ]);
+
+    return findEvent($pdo, $identityUserId, (int) $pdo->lastInsertId()) ?? [];
 }
 
 function apiAuthClient(string $apiBaseUrl): ApiAuthClient

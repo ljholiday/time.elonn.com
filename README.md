@@ -1,13 +1,14 @@
 # Elonn Time
 
-`time.elonn.local` is the calendar and event service for Elonn.
+`time.elonn.local` is the calendar and scheduling service for Elonn.
 
-It owns calendar data, event data, and the Time runtime panel. Identity is validated through the shared API.
+It owns calendar data, event data, and the Time runtime panel. Identity is validated through the shared API. Social events are ingested into Time as per-member calendar copies so members can see social events on their calendars without duplicating event authority.
 
 ## Responsibilities
 
 - calendar and event storage
 - authenticated calendar/event APIs
+- Social event ingestion for calendar mirrors
 - runtime panel rendering for the Web shell
 - identity checks through `api.elonn`
 
@@ -26,6 +27,7 @@ It owns calendar data, event data, and the Time runtime panel. Identity is valid
 - `POST /calendars`
 - `GET /events`
 - `POST /events`
+- `POST /integrations/social/events`
 - `GET /runtime/panel/time`
 - `POST /runtime/calendars`
 
@@ -46,6 +48,8 @@ DB_USERNAME=
 DB_PASSWORD=
 DB_CHARSET=
 ELONN_API_BASE_URL=
+ELONN_SOCIAL_BASE_URL=
+ELONN_SOCIAL_INGEST_TOKEN=
 ```
 
 The repo-specific guidance file is [`time.elonn.md`](./time.elonn.md).

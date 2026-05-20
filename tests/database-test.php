@@ -28,6 +28,7 @@ final class TimeDatabaseTest
         $this->testSchema();
         $this->testCalendarCrud();
         $this->testEventCrud();
+        $this->testSocialImportCrud();
         $this->report();
     }
 
@@ -156,6 +157,53 @@ final class TimeDatabaseTest
                 $this->pdo->rollBack();
             }
             $this->fail('Event CRUD threw: ' . $e->getMessage());
+        }
+    }
+
+    private function testSocialImportCrud(): void
+    {
+        echo "Testing social import schema... ";
+        $userId = 'test_' . bin2hex(random_bytes(8));
+        $now = date('Y-m-d H:i:s');
+        try {
+            $this->pdo->beginTransaction();
+
+            $calendarInsert = $this->pdo->prepare(
+                "INSERT INTO time_calendars
+                    (identity_user_id, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at)
+                 VALUES
+                    (:uid, 'Social events', '#7c9cff', NULL, 'active', 'social', 'event_feed', 'default', 'https://social.elonn.com/social/events', :now)"
+            );
+            $calendarInsert->execute([':uid' => $userId, ':now' => $now]);
+            $calendarId = (int) $this->pdo->lastInsertId();
+
+            $eventInsert = $this->pdo->prepare(
+                "INSERT INTO time_events
+                    (identity_user_id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, source_service, source_object_type, source_object_id, source_url, created_at)
+                 VALUES
+                    (:uid, :calendar_id, 'Social event', 'Imported from Social', NULL, NULL, NULL, NULL, 1, 'active', 'social', 'event', 'social-123', 'https://social.elonn.com/social/events/123', :now)"
+            );
+            $eventInsert->execute([':uid' => $userId, ':calendar_id' => $calendarId, ':now' => $now]);
+
+            $sel = $this->pdo->prepare(
+                'SELECT title, source_service, source_object_type, source_object_id
+                 FROM time_events WHERE identity_user_id = :uid AND source_object_id = :source_object_id'
+            );
+            $sel->execute([':uid' => $userId, ':source_object_id' => 'social-123']);
+            $row = $sel->fetch(\PDO::FETCH_ASSOC);
+            if ($row === false || $row['title'] !== 'Social event' || $row['source_service'] !== 'social') {
+                $this->pdo->rollBack();
+                $this->fail('Imported social event was not persisted correctly.');
+                return;
+            }
+
+            $this->pdo->rollBack();
+            $this->pass('Social import schema CRUD succeeded (rolled back).');
+        } catch (\Throwable $e) {
+            if ($this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            $this->fail('Social import schema test threw: ' . $e->getMessage());
         }
     }
 

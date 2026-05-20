@@ -2,9 +2,11 @@
 
 declare(strict_types=1);
 
+$environment = time_string_config('APP_ENV', 'production');
+
 return [
     'app' => [
-        'environment' => time_string_config('APP_ENV', 'production'),
+        'environment' => $environment,
         'debug' => time_bool_config('APP_DEBUG', false),
         'url' => rtrim(time_string_config('APP_URL', 'https://time.elonn.com'), '/'),
     ],
@@ -19,6 +21,8 @@ return [
     ],
     'services' => [
         'api_base_url' => rtrim(time_string_config('ELONN_API_BASE_URL', 'https://api.elonn.com'), '/'),
+        'social_base_url' => time_service_base_url('ELONN_SOCIAL_BASE_URL', $environment, 'https://social.elonn.local', 'https://social.elonn.com'),
+        'social_ingest_token' => time_string_config('ELONN_SOCIAL_INGEST_TOKEN', ''),
     ],
 ];
 
@@ -42,4 +46,13 @@ function time_bool_config(string $key, bool $default): bool
     }
 
     return filter_var($value, FILTER_VALIDATE_BOOL);
+}
+
+function time_service_base_url(string $key, string $environment, string $localDefault, string $productionDefault): string
+{
+    $default = in_array(strtolower($environment), ['local', 'development', 'dev', 'testing'], true)
+        ? $localDefault
+        : $productionDefault;
+
+    return rtrim(time_string_config($key, $default), '/');
 }
