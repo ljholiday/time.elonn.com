@@ -74,18 +74,37 @@ $router->post('/integrations/social/events', static function () use ($config): v
     }
 
     $input = requestInput();
+    $identityUserIds = socialIngestRecipientIds($input['recipient_ids'] ?? null);
     $identityUserId = cleanString($input['identity_user_id'] ?? null);
     $eventInput = is_array($input['event'] ?? null) ? $input['event'] : null;
-    if ($identityUserId === null || $eventInput === null) {
-        Response::json(['error' => 'identity_user_id and event are required.'], 400);
+    if ($eventInput === null) {
+        Response::json(['error' => 'event is required.'], 400);
+        return;
+    }
+
+    if ($identityUserIds === [] && $identityUserId !== null) {
+        $identityUserIds = [$identityUserId];
+    }
+
+    if ($identityUserIds === []) {
+        Response::json(['error' => 'recipient_ids or identity_user_id is required.'], 400);
         return;
     }
 
     try {
         $pdo = timePdo($config);
-        $calendar = ensureSocialImportCalendar($pdo, $config, $identityUserId);
-        $event = upsertSocialEvent($pdo, $config, $calendar, $identityUserId, $eventInput);
-        Response::json(['calendar' => calendarPayload($calendar), 'event' => eventPayload($event)], 201);
+        $results = [];
+        foreach ($identityUserIds as $recipientIdentityUserId) {
+            $calendar = ensureSocialImportCalendar($pdo, $config, $recipientIdentityUserId);
+            $event = upsertSocialEvent($pdo, $config, $calendar, $recipientIdentityUserId, $eventInput);
+            $results[] = [
+                'identity_user_id' => $recipientIdentityUserId,
+                'calendar' => calendarPayload($calendar),
+                'event' => eventPayload($event),
+            ];
+        }
+
+        Response::json(['results' => $results], 201);
     } catch (Throwable $throwable) {
         error_log('[time] social event ingest failed: ' . $throwable->getMessage());
         Response::json(['error' => 'Unable to ingest social event.'], 500);
@@ -1222,6 +1241,26 @@ function requireSocialIngestToken(array $config): bool
 
     $header = $_SERVER['HTTP_X_ELONN_SOCIAL_INGEST_TOKEN'] ?? '';
     return is_string($header) && hash_equals($configured, trim($header));
+}
+
+/**
+ * @return array<int, string>
+ */
+function socialIngestRecipientIds(mixed $value): array
+{
+    if (!is_array($value)) {
+        return [];
+    }
+
+    $recipients = [];
+    foreach ($value as $recipient) {
+        $identityUserId = cleanString($recipient);
+        if ($identityUserId !== null) {
+            $recipients[$identityUserId] = $identityUserId;
+        }
+    }
+
+    return array_values($recipients);
 }
 
 /**
