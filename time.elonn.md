@@ -10,7 +10,7 @@ Consumption order:
 
 1. User authenticates through `elonn.local`
 2. `api.elonn` issues and validates the shared auth token
-3. `world.elonn` composes Time into the runtime contract
+3. `world.elonn` composes Time into the runtime composition
 4. `web.elonn` renders the Time carry panel
 5. Time validates identity by calling `api.elonn`
 
