@@ -2,7 +2,7 @@
 
 `time.elonn.local` is the standalone calendar service for Elonn. Production is `time.elonn.com`.
 
-Time owns calendar and event data. It validates identity through the shared API and must not connect directly to the `elonn_api` database. Social gathering copies are ingested into Time through the service ingestion endpoint; Social remains the source of gathering truth.
+Time owns calendar and event data. It validates identity through the shared API and must not connect directly to the `elonn_api` database. Social event copies are ingested into Time through the service ingestion endpoint; Social remains the source of event truth.
 
 ## Role in the stack
 
@@ -10,7 +10,7 @@ Consumption order:
 
 1. User authenticates through `elonn.local`
 2. `api.elonn` issues and validates the shared auth token
-3. `world.elonn` composes Time into the runtime composition
+3. `world.elonn` composes Time into the runtime contract
 4. `web.elonn` renders the Time carry panel
 5. Time validates identity by calling `api.elonn`
 
