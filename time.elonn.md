@@ -2,7 +2,7 @@
 
 `time.elonn.local` is the standalone calendar service for Elonn. Production is `time.elonn.com`.
 
-Time owns calendar and event data. It validates identity through the shared API and must not connect directly to the `elonn_api` database. Social event copies are ingested into Time through the service ingestion endpoint; Social remains the source of event truth.
+Time owns calendar and event data. It validates identity through the shared API and must not connect directly to the `elonn_api` database. Social gathering copies are ingested into Time through the service ingestion endpoint; Social remains the source of gathering truth.
 
 ## Role in the stack
 
