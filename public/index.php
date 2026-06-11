@@ -135,23 +135,24 @@ $router->get('/runtime/panel/time', static function () use ($config, $apiBaseUrl
 
     $pdo = timePdo($config);
     $calendars = listCalendars($pdo, $identity['id']);
-    $events = array_slice(listEvents($pdo, $identity['id'], null), 0, 6);
+    $view = trim((string) ($_GET['view'] ?? ''));
+    $events = listEventsByView($pdo, $identity['id'], $view);
     $wantsJson = str_contains((string) ($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json')
         || str_contains((string) ($_GET['format'] ?? ''), 'json');
 
     if ($wantsJson) {
         Response::json([
             'kind' => 'time',
-            'view' => 'time',
+            'view' => $view !== '' ? $view : 'time',
             'title' => 'Time',
             'identity' => $identity,
             'calendars' => array_map('calendarPayload', $calendars),
             'events' => array_map('eventPayload', $events),
             'nav' => [
-                ['id' => 'today',     'label' => 'Today',     'action' => null],
-                ['id' => 'week',      'label' => 'Week',      'action' => null],
-                ['id' => 'month',     'label' => 'Month',     'action' => null],
-                ['id' => 'upcoming',  'label' => 'Upcoming',  'action' => null],
+                ['id' => 'today',     'label' => 'Today',     'action' => '/world/panels/time?view=today'],
+                ['id' => 'week',      'label' => 'Week',      'action' => '/world/panels/time?view=week'],
+                ['id' => 'month',     'label' => 'Month',     'action' => '/world/panels/time?view=month'],
+                ['id' => 'upcoming',  'label' => 'Upcoming',  'action' => '/world/panels/time?view=upcoming'],
                 ['id' => 'calendars', 'label' => 'Calendars', 'action' => '/world/calendars'],
             ],
             'actions' => [
@@ -1127,6 +1128,44 @@ function listEvents(PDO $pdo, string $identityUserId, ?int $calendarId): array
     $stmt->execute($params);
 
     return $stmt->fetchAll();
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function listEventsByView(PDO $pdo, string $identityUserId, string $view): array
+{
+    $all = listEvents($pdo, $identityUserId, null);
+    $now = time();
+
+    switch ($view) {
+        case 'today':
+            $start = strtotime('today');
+            $end = strtotime('tomorrow') - 1;
+            return array_values(array_filter($all, static function (array $e) use ($start, $end): bool {
+                $t = strtotime((string) $e['starts_at']);
+                return $t !== false && $t >= $start && $t <= $end;
+            }));
+        case 'week':
+            $end = strtotime('+7 days', $now);
+            return array_values(array_filter($all, static function (array $e) use ($now, $end): bool {
+                $t = strtotime((string) $e['starts_at']);
+                return $t !== false && $t >= $now && $t <= $end;
+            }));
+        case 'month':
+            $end = strtotime('+30 days', $now);
+            return array_values(array_filter($all, static function (array $e) use ($now, $end): bool {
+                $t = strtotime((string) $e['starts_at']);
+                return $t !== false && $t >= $now && $t <= $end;
+            }));
+        case 'upcoming':
+            return array_values(array_filter($all, static function (array $e) use ($now): bool {
+                $t = strtotime((string) $e['starts_at']);
+                return $t !== false && $t >= $now;
+            }));
+        default:
+            return array_slice($all, 0, 6);
+    }
 }
 
 /**
