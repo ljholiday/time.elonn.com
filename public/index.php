@@ -147,6 +147,13 @@ $router->get('/runtime/panel/time', static function () use ($config, $apiBaseUrl
             'identity' => $identity,
             'calendars' => array_map('calendarPayload', $calendars),
             'events' => array_map('eventPayload', $events),
+            'nav' => [
+                ['id' => 'today',     'label' => 'Today',     'action' => null],
+                ['id' => 'week',      'label' => 'Week',      'action' => null],
+                ['id' => 'month',     'label' => 'Month',     'action' => null],
+                ['id' => 'upcoming',  'label' => 'Upcoming',  'action' => null],
+                ['id' => 'calendars', 'label' => 'Calendars', 'action' => '/world/calendars'],
+            ],
             'actions' => [
                 'create_calendar' => '/world/calendars',
             ],
@@ -214,6 +221,30 @@ $router->get('/runtime/panel/time', static function () use ($config, $apiBaseUrl
     <?php
 
     runtimePanel('Time', (string) ob_get_clean());
+});
+
+$router->get('/runtime/status', static function () use ($config, $apiBaseUrl): void {
+    allowRuntimeOrigin();
+
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $stmt = $pdo->prepare(
+        "SELECT COUNT(*) FROM time_events
+         WHERE identity_user_id = :identity_user_id
+           AND starts_at > NOW()
+           AND starts_at <= DATE_ADD(NOW(), INTERVAL 7 DAY)
+           AND status = 'active'"
+    );
+    $stmt->execute(['identity_user_id' => $identity['id']]);
+    $upcomingCount = (int) $stmt->fetchColumn();
+
+    Response::json([
+        'upcoming_events' => $upcomingCount,
+    ]);
 });
 
 $router->post('/runtime/calendars', static function () use ($config, $apiBaseUrl): void {
