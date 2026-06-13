@@ -12,12 +12,6 @@ It owns calendar data, event data, and the Time runtime panel. Identity is valid
 - runtime panel rendering for the Web shell
 - identity checks through `api.elonn`
 
-## Consumed by
-
-- `web.elonn.local`
-- `world.elonn.local`
-- `elonn.local` for shared auth flow
-
 ## Routes
 
 - `GET /health`

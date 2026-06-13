@@ -4,18 +4,6 @@
 
 Time owns calendar and event data. It validates identity through the shared API and must not connect directly to the `elonn_api` database. Social event copies are ingested into Time through the service ingestion endpoint; Social remains the source of event truth.
 
-## Role in the stack
-
-Consumption order:
-
-1. User authenticates through `elonn.local`
-2. `api.elonn` issues and validates the shared auth token
-3. `world.elonn` composes Time into the runtime contract
-4. `web.elonn` renders the Time carry panel
-5. Time validates identity by calling `api.elonn`
-
-Time is a product service, not a login authority.
-
 ## Routes
 
 Public/runtime:
@@ -117,12 +105,3 @@ https://time.elonn.com/
 https://time.elonn.com/ready
 ```
 
-## Related repos
-
-- `elonn.local`: browser account surface
-- `api.elonn.local`: shared identity authority
-- `web.elonn.local`: browser runtime
-- `world.elonn.local`: composition layer
-- `maps.elonn.local`: canonical field dataset
-- `social.elonn.local`: social object service
-- `admin.elonn.local`: operator console
