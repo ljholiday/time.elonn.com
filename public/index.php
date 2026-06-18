@@ -3,6 +3,11 @@
 declare(strict_types=1);
 
 use Elonn\Time\ApiAuthClient;
+use Elonn\Time\CalendarObject;
+use Elonn\Time\CalendarStore;
+use Elonn\Time\Dav\AuthBackend as DavAuthBackend;
+use Elonn\Time\Dav\CalendarBackend as DavCalendarBackend;
+use Elonn\Time\Dav\PrincipalBackend as DavPrincipalBackend;
 use Elonn\Time\Database;
 use Elonn\Time\Response;
 use Elonn\Time\Router;
@@ -23,7 +28,7 @@ $router = new Router();
 
 $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 if (isDavPath($requestPath)) {
-    handleDavRequest($apiBaseUrl);
+    handleDavRequest($config, $apiBaseUrl);
     return;
 }
 
@@ -134,29 +139,32 @@ $router->get('/runtime/panel/time', static function () use ($config, $apiBaseUrl
     }
 
     $pdo = timePdo($config);
-    $calendars = listCalendars($pdo, $identity['id']);
-    $view = trim((string) ($_GET['view'] ?? ''));
-    $events = listEventsByView($pdo, $identity['id'], $view);
+    $view = strtolower(trim((string) ($_GET['view'] ?? 'day')));
+    $view = in_array($view, ['day', 'week', 'month', 'agenda', 'tasks'], true) ? $view : 'day';
+    $anchorDate = validDate((string) ($_GET['date'] ?? '')) ?? gmdate('Y-m-d');
+    $timezone = validTimezone((string) ($_GET['timezone'] ?? '')) ?? 'UTC';
+    $workspace = (new CalendarStore($pdo))->workspace((string) $identity['id'], $view, $anchorDate, $timezone);
+    $calendars = $workspace['calendars'];
+    $events = $workspace['appointments'];
     $wantsJson = str_contains((string) ($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json')
         || str_contains((string) ($_GET['format'] ?? ''), 'json');
 
     if ($wantsJson) {
-        Response::json([
-            'kind' => 'time',
-            'view' => $view !== '' ? $view : 'time',
+        Response::json($workspace + [
             'title' => 'Time',
+            'summary' => 'Appointments and tasks from Time.',
             'identity' => $identity,
-            'calendars' => array_map('calendarPayload', $calendars),
-            'events' => array_map('eventPayload', $events),
             'nav' => [
-                ['id' => 'today',     'label' => 'Today',     'action' => '/world/panels/time?view=today'],
-                ['id' => 'week',      'label' => 'Week',      'action' => '/world/panels/time?view=week'],
-                ['id' => 'month',     'label' => 'Month',     'action' => '/world/panels/time?view=month'],
-                ['id' => 'upcoming',  'label' => 'Upcoming',  'action' => '/world/panels/time?view=upcoming'],
+                ['id' => 'day',       'label' => 'Day',       'action' => '/world/panels/time?view=day&date=' . rawurlencode($anchorDate)],
+                ['id' => 'week',      'label' => 'Week',      'action' => '/world/panels/time?view=week&date=' . rawurlencode($anchorDate)],
+                ['id' => 'month',     'label' => 'Month',     'action' => '/world/panels/time?view=month&date=' . rawurlencode($anchorDate)],
+                ['id' => 'agenda',    'label' => 'Agenda',    'action' => '/world/panels/time?view=agenda&date=' . rawurlencode($anchorDate)],
+                ['id' => 'tasks',     'label' => 'Tasks',     'action' => '/world/panels/time?view=tasks&date=' . rawurlencode($anchorDate)],
                 ['id' => 'calendars', 'label' => 'Calendars', 'action' => '/world/calendars'],
             ],
             'actions' => [
                 'create_calendar' => '/world/calendars',
+                'create_object' => '/world/time/objects',
             ],
         ]);
         return;
@@ -224,6 +232,66 @@ $router->get('/runtime/panel/time', static function () use ($config, $apiBaseUrl
     runtimePanel('Time', (string) ob_get_clean());
 });
 
+$router->post('/runtime/objects', static function () use ($config, $apiBaseUrl): void {
+    allowRuntimeOrigin();
+    $identity = runtimeIdentity($apiBaseUrl);
+    if ($identity === null) {
+        Response::json(['error' => 'Authentication required.'], 401);
+        return;
+    }
+    try {
+        $object = (new CalendarStore(timePdo($config)))->create((string) $identity['id'], requestInput());
+        Response::json(['object' => $object], 201);
+    } catch (InvalidArgumentException $error) {
+        Response::json(['error' => $error->getMessage()], 422);
+    } catch (Throwable $error) {
+        error_log('[time] unable to create calendar object: ' . $error->getMessage());
+        Response::json(['error' => 'Unable to create calendar object.'], 500);
+    }
+});
+
+$router->patch('/runtime/objects/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
+    allowRuntimeOrigin();
+    $identity = runtimeIdentity($apiBaseUrl);
+    if ($identity === null) {
+        Response::json(['error' => 'Authentication required.'], 401);
+        return;
+    }
+    try {
+        $object = (new CalendarStore(timePdo($config)))->update(
+            (string) $identity['id'],
+            positiveInt($params['id'] ?? null) ?? 0,
+            requestInput()
+        );
+        Response::json(['object' => $object]);
+    } catch (DomainException $error) {
+        Response::json(['error' => $error->getMessage()], 409);
+    } catch (InvalidArgumentException $error) {
+        Response::json(['error' => $error->getMessage()], 422);
+    } catch (Throwable $error) {
+        error_log('[time] unable to update calendar object: ' . $error->getMessage());
+        Response::json(['error' => 'Unable to update calendar object.'], 500);
+    }
+});
+
+$router->delete('/runtime/objects/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
+    allowRuntimeOrigin();
+    $identity = runtimeIdentity($apiBaseUrl);
+    if ($identity === null) {
+        Response::json(['error' => 'Authentication required.'], 401);
+        return;
+    }
+    try {
+        (new CalendarStore(timePdo($config)))->delete(
+            (string) $identity['id'],
+            positiveInt($params['id'] ?? null) ?? 0
+        );
+        Response::json(['status' => 'deleted']);
+    } catch (DomainException $error) {
+        Response::json(['error' => $error->getMessage()], 409);
+    }
+});
+
 $router->get('/runtime/status', static function () use ($config, $apiBaseUrl): void {
     allowRuntimeOrigin();
 
@@ -266,12 +334,15 @@ $router->post('/runtime/calendars', static function () use ($config, $apiBaseUrl
 
     $pdo = timePdo($config);
     $stmt = $pdo->prepare(
-        "INSERT INTO time_calendars (identity_user_id, name, color, timezone, status, created_at, updated_at)
-         VALUES (:identity_user_id, :name, NULL, :timezone, 'active', :created_at, NULL)"
+        "INSERT INTO time_calendars (identity_user_id, uri, name, description, color, timezone, components, sync_token, status, created_at, updated_at)
+         VALUES (:identity_user_id, :uri, :name, :description, :color, :timezone, 'VEVENT,VTODO', 1, 'active', :created_at, NULL)"
     );
     $stmt->execute([
         ':identity_user_id' => $identity['id'],
+        ':uri' => calendarUri($name),
         ':name' => $name,
+        ':description' => cleanOptionalString($input['description'] ?? null),
+        ':color' => cleanOptionalString($input['color'] ?? null),
         ':timezone' => cleanOptionalString($input['timezone'] ?? null),
         ':created_at' => now(),
     ]);
@@ -335,11 +406,12 @@ $router->post('/calendars', static function () use ($config, $apiBaseUrl): void 
     $now = now();
 
     $stmt = timePdo($config)->prepare(
-        "INSERT INTO time_calendars (identity_user_id, name, color, timezone, status, created_at, updated_at)
-         VALUES (:identity_user_id, :name, :color, :timezone, 'active', :created_at, NULL)"
+        "INSERT INTO time_calendars (identity_user_id, uri, name, color, timezone, components, sync_token, status, created_at, updated_at)
+         VALUES (:identity_user_id, :uri, :name, :color, :timezone, 'VEVENT,VTODO', 1, 'active', :created_at, NULL)"
     );
     $stmt->execute([
         ':identity_user_id' => $identity['id'],
+        ':uri' => calendarUri($name),
         ':name' => $name,
         ':color' => $color,
         ':timezone' => $timezone,
@@ -392,6 +464,7 @@ $router->patch('/calendars/{id}', static function (array $params) use ($config, 
         return;
     }
 
+    $description = array_key_exists('description', $input) ? cleanOptionalString($input['description']) : $calendar['description'];
     $color = array_key_exists('color', $input) ? cleanOptionalString($input['color']) : $calendar['color'];
     $timezone = array_key_exists('timezone', $input) ? cleanOptionalString($input['timezone']) : $calendar['timezone'];
     $status = array_key_exists('status', $input) ? cleanString($input['status']) : (string) $calendar['status'];
@@ -402,11 +475,12 @@ $router->patch('/calendars/{id}', static function (array $params) use ($config, 
 
     $stmt = $pdo->prepare(
         "UPDATE time_calendars
-         SET name = :name, color = :color, timezone = :timezone, status = :status, updated_at = :updated_at
+         SET name = :name, description = :description, color = :color, timezone = :timezone, status = :status, updated_at = :updated_at
          WHERE id = :id AND identity_user_id = :identity_user_id"
     );
     $stmt->execute([
         ':name' => $name,
+        ':description' => $description,
         ':color' => $color,
         ':timezone' => $timezone,
         ':status' => $status,
@@ -429,6 +503,10 @@ $router->delete('/calendars/{id}', static function (array $params) use ($config,
     $calendar = findCalendar($pdo, $identity['id'], $calendarId);
     if ($calendar === null) {
         Response::json(['error' => 'Calendar not found.'], 404);
+        return;
+    }
+    if (($calendar['source_service'] ?? null) === 'social') {
+        Response::json(['error' => 'The Social mirror calendar cannot be deleted from Time.'], 409);
         return;
     }
 
@@ -551,6 +629,9 @@ $router->post('/events', static function () use ($config, $apiBaseUrl): void {
     ]);
 
     $event = findEvent($pdo, $identity['id'], (int) $pdo->lastInsertId());
+    if ($event !== null) {
+        syncLegacyEventObject($pdo, $event);
+    }
 
     if (isBrowserRequest()) {
         redirect('/events');
@@ -644,7 +725,11 @@ $router->patch('/events/{id}', static function (array $params) use ($config, $ap
         ':identity_user_id' => $identity['id'],
     ]);
 
-    Response::json(['event' => eventPayload(findEvent($pdo, $identity['id'], $eventId))]);
+    $updated = findEvent($pdo, $identity['id'], $eventId);
+    if ($updated !== null) {
+        syncLegacyEventObject($pdo, $updated);
+    }
+    Response::json(['event' => eventPayload($updated)]);
 });
 
 $router->delete('/events/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
@@ -671,6 +756,8 @@ $router->delete('/events/{id}', static function (array $params) use ($config, $a
         ':id' => $eventId,
         ':identity_user_id' => $identity['id'],
     ]);
+    $event['status'] = 'deleted';
+    syncLegacyEventObject($pdo, $event);
 
     Response::json(['status' => 'deleted']);
 });
@@ -755,7 +842,7 @@ function isDavPath(string $path): bool
     return $path === '/dav' || str_starts_with($path, '/dav/');
 }
 
-function handleDavRequest(string $apiBaseUrl): void
+function handleDavRequest(array $config, string $apiBaseUrl): void
 {
     $credentials = basicAuthCredentials();
     if ($credentials === null) {
@@ -778,30 +865,22 @@ function handleDavRequest(string $apiBaseUrl): void
         return;
     }
 
-    $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
-    header('DAV: 1, 3, calendar-access');
-    header('MS-Author-Via: DAV');
-
-    if ($method === 'OPTIONS') {
-        http_response_code(204);
-        header('Allow: OPTIONS, PROPFIND');
-        return;
-    }
-
-    if ($method === 'PROPFIND') {
-        http_response_code(501);
-        header('Content-Type: application/xml; charset=utf-8');
-        echo '<?xml version="1.0" encoding="UTF-8"?>';
-        echo '<d:error xmlns:d="DAV:"><d:responsedescription>CalDAV collections are not implemented yet.</d:responsedescription></d:error>';
-        return;
-    }
-
-    http_response_code(501);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode([
-        'error' => 'CalDAV collections are not implemented yet.',
-        'identity_user_id' => $identity['id'],
-    ], JSON_UNESCAPED_SLASHES);
+    $principalUri = 'principals/' . rawurlencode((string) $identity['id']);
+    $principalBackend = new DavPrincipalBackend($identity);
+    $calendarBackend = new DavCalendarBackend(timePdo($config), (string) $identity['id']);
+    $server = new Sabre\DAV\Server([
+        new Sabre\DAVACL\PrincipalCollection($principalBackend),
+        new Sabre\CalDAV\CalendarRoot($principalBackend, $calendarBackend),
+    ]);
+    $server->setBaseUri('/dav/');
+    $server->addPlugin(new Sabre\DAV\Auth\Plugin(
+        new DavAuthBackend($credentials['username'], $principalUri),
+        'Elonn Time DAV'
+    ));
+    $server->addPlugin(new Sabre\DAVACL\Plugin());
+    $server->addPlugin(new Sabre\CalDAV\Plugin());
+    $server->addPlugin(new Sabre\DAV\Sync\Plugin());
+    $server->exec();
 }
 
 /**
@@ -1080,6 +1159,25 @@ function normalizeDateTime(mixed $value): ?string
     }
 }
 
+function validDate(string $value): ?string
+{
+    $value = trim($value);
+    $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+    return $date !== false && $date->format('Y-m-d') === $value ? $value : null;
+}
+
+function validTimezone(string $value): ?string
+{
+    $value = trim($value);
+    return $value !== '' && in_array($value, DateTimeZone::listIdentifiers(), true) ? $value : null;
+}
+
+function calendarUri(string $name): string
+{
+    $base = strtolower(trim((string) preg_replace('/[^a-zA-Z0-9]+/', '-', $name), '-'));
+    return ($base !== '' ? $base : 'calendar') . '-' . substr(bin2hex(random_bytes(6)), 0, 12);
+}
+
 function truthy(mixed $value): bool
 {
     return $value === true || $value === 1 || $value === '1' || $value === 'true';
@@ -1096,7 +1194,7 @@ function now(): string
 function listCalendars(PDO $pdo, string $identityUserId): array
 {
     $stmt = $pdo->prepare(
-        "SELECT id, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
+        "SELECT id, uri, name, description, color, timezone, components, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
          FROM time_calendars
          WHERE identity_user_id = :identity_user_id
            AND status <> 'deleted'
@@ -1202,7 +1300,7 @@ function findEvent(PDO $pdo, string $identityUserId, ?int $id): ?array
     }
 
     $stmt = $pdo->prepare(
-        "SELECT id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
+        "SELECT id, identity_user_id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
          FROM time_events
          WHERE id = :id AND identity_user_id = :identity_user_id AND status <> 'deleted'
          LIMIT 1"
@@ -1228,11 +1326,16 @@ function calendarPayload(?array $calendar): array
 
     return [
         'id' => (int) $calendar['id'],
+        'uri' => (string) $calendar['uri'],
         'name' => (string) $calendar['name'],
+        'description' => $calendar['description'] === null ? null : (string) $calendar['description'],
         'color' => $calendar['color'] === null ? null : (string) $calendar['color'],
         'timezone' => $calendar['timezone'] === null ? null : (string) $calendar['timezone'],
+        'components' => (string) $calendar['components'],
         'status' => (string) $calendar['status'],
         'source' => calendarSourcePayload($calendar),
+        'editable_fields' => ['name', 'description', 'color', 'timezone'],
+        'deletable' => ($calendar['source_service'] ?? null) !== 'social',
         'created_at' => (string) $calendar['created_at'],
         'updated_at' => $calendar['updated_at'] === null ? null : (string) $calendar['updated_at'],
     ];
@@ -1371,9 +1474,9 @@ function ensureSocialImportCalendar(PDO $pdo, array $config, string $identityUse
     $now = now();
     $insert = $pdo->prepare(
         "INSERT INTO time_calendars
-            (identity_user_id, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at)
+            (identity_user_id, uri, name, color, timezone, components, sync_token, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at)
          VALUES
-            (:identity_user_id, :name, :color, :timezone, 'active', 'social', 'event_feed', 'default', :source_url, :created_at, NULL)
+            (:identity_user_id, 'social-events', :name, :color, :timezone, 'VEVENT,VTODO', 1, 'active', 'social', 'event_feed', 'default', :source_url, :created_at, NULL)
          ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"
     );
     $insert->execute([
@@ -1452,7 +1555,183 @@ function upsertSocialEvent(PDO $pdo, array $config, array $calendar, string $ide
         ':created_at' => now(),
     ]);
 
-    return findEvent($pdo, $identityUserId, (int) $pdo->lastInsertId()) ?? [];
+    $event = findEventAnyStatus($pdo, $identityUserId, (int) $pdo->lastInsertId()) ?? [];
+    if ($event !== []) {
+        syncLegacyEventObject($pdo, $event);
+    }
+    return $event;
+}
+
+/**
+ * Keeps compatibility writes and Social ingestion on the canonical object store.
+ *
+ * @param array<string, mixed> $event
+ */
+function syncLegacyEventObject(PDO $pdo, array $event): void
+{
+    $identityUserId = (string) $event['identity_user_id'];
+    $sourceService = $event['source_service'] === null ? null : (string) $event['source_service'];
+    $sourceObjectType = $event['source_object_type'] === null ? null : (string) $event['source_object_type'];
+    $sourceObjectId = $event['source_object_id'] === null ? null : (string) $event['source_object_id'];
+    $existing = null;
+    if ($sourceService !== null && $sourceObjectId !== null) {
+        $stmt = $pdo->prepare(
+            'SELECT * FROM time_calendar_objects
+             WHERE identity_user_id = :identity_user_id
+               AND source_service = :source_service
+               AND source_object_type = :source_object_type
+               AND source_object_id = :source_object_id
+             LIMIT 1'
+        );
+        $stmt->execute([
+            'identity_user_id' => $identityUserId,
+            'source_service' => $sourceService,
+            'source_object_type' => $sourceObjectType,
+            'source_object_id' => $sourceObjectId,
+        ]);
+        $row = $stmt->fetch();
+        $existing = is_array($row) ? $row : null;
+    } else {
+        $stmt = $pdo->prepare(
+            'SELECT * FROM time_calendar_objects
+             WHERE identity_user_id = :identity_user_id AND uid = :uid LIMIT 1'
+        );
+        $stmt->execute([
+            'identity_user_id' => $identityUserId,
+            'uid' => 'time-event-' . (string) $event['id'] . '@elonn',
+        ]);
+        $row = $stmt->fetch();
+        $existing = is_array($row) ? $row : null;
+    }
+
+    if ((string) $event['status'] === 'deleted') {
+        if ($existing !== null) {
+            $calendarId = (int) $existing['calendar_id'];
+            $uri = (string) $existing['uri'];
+            $now = now();
+            $pdo->beginTransaction();
+            try {
+                $pdo->prepare(
+                    'DELETE FROM time_calendar_objects WHERE id = :id AND identity_user_id = :identity_user_id'
+                )->execute(['id' => (int) $existing['id'], 'identity_user_id' => $identityUserId]);
+                $pdo->prepare(
+                    'UPDATE time_calendars SET sync_token = sync_token + 1, updated_at = :updated_at WHERE id = :id'
+                )->execute(['updated_at' => $now, 'id' => $calendarId]);
+                $tokenStmt = $pdo->prepare('SELECT sync_token FROM time_calendars WHERE id = :id');
+                $tokenStmt->execute(['id' => $calendarId]);
+                $pdo->prepare(
+                    "INSERT INTO time_calendar_changes (calendar_id, sync_token, uri, operation, created_at)
+                     VALUES (:calendar_id, :sync_token, :uri, 'deleted', :created_at)"
+                )->execute([
+                    'calendar_id' => $calendarId,
+                    'sync_token' => (int) $tokenStmt->fetchColumn(),
+                    'uri' => $uri,
+                    'created_at' => $now,
+                ]);
+                $pdo->commit();
+            } catch (Throwable $throwable) {
+                $pdo->rollBack();
+                throw $throwable;
+            }
+        }
+        return;
+    }
+
+    $uid = $sourceService === 'social'
+        ? 'social-event-' . $sourceObjectId . '@elonn'
+        : 'time-event-' . (string) $event['id'] . '@elonn';
+    $calendarId = $existing === null ? (int) $event['calendar_id'] : (int) $existing['calendar_id'];
+    $fields = [
+        'uid' => $uid,
+        'component_type' => 'VEVENT',
+        'title' => (string) $event['title'],
+        'description' => $event['description'],
+        'location' => $event['location'],
+        'starts_at' => $event['starts_at'],
+        'ends_at' => $event['ends_at'],
+        'timezone' => $event['timezone'],
+        'all_day' => (bool) $event['all_day'],
+        'status' => (string) $event['status'],
+        'alarm_trigger' => $existing['alarm_trigger'] ?? null,
+    ];
+    $calendarData = CalendarObject::build($fields, $uid);
+    $parsed = CalendarObject::parse($calendarData);
+    $uri = $existing === null
+        ? ($sourceService === 'social' ? 'social-event-' . $sourceObjectId . '.ics' : 'event-' . (string) $event['id'] . '.ics')
+        : (string) $existing['uri'];
+    $now = now();
+
+    if ($existing === null) {
+        $stmt = $pdo->prepare(
+            'INSERT INTO time_calendar_objects
+                (identity_user_id, calendar_id, uri, uid, component_type, calendar_data, etag, size_bytes,
+                 title, description, location, starts_at, ends_at, due_at, completed_at, timezone, all_day,
+                 status, priority, recurrence_rule, alarm_trigger, first_occurrence, last_occurrence,
+                 source_service, source_object_type, source_object_id, source_url, created_at)
+             VALUES
+                (:identity_user_id, :calendar_id, :uri, :uid, :component_type, :calendar_data, :etag, :size_bytes,
+                 :title, :description, :location, :starts_at, :ends_at, :due_at, :completed_at, :timezone, :all_day,
+                 :status, :priority, :recurrence_rule, :alarm_trigger, :first_occurrence, :last_occurrence,
+                 :source_service, :source_object_type, :source_object_id, :source_url, :created_at)'
+        );
+        $stmt->execute($parsed + [
+            'identity_user_id' => $identityUserId,
+            'calendar_id' => $calendarId,
+            'uri' => $uri,
+            'source_service' => $sourceService,
+            'source_object_type' => $sourceObjectType,
+            'source_object_id' => $sourceObjectId,
+            'source_url' => $event['source_url'],
+            'created_at' => $now,
+        ]);
+    } else {
+        $assignments = [];
+        foreach (array_keys($parsed) as $field) {
+            $assignments[] = $field . ' = :' . $field;
+        }
+        $stmt = $pdo->prepare(
+            'UPDATE time_calendar_objects SET ' . implode(', ', $assignments) . ',
+                    source_url = :source_url, updated_at = :updated_at
+             WHERE id = :id AND identity_user_id = :identity_user_id'
+        );
+        $stmt->execute($parsed + [
+            'source_url' => $event['source_url'],
+            'updated_at' => $now,
+            'id' => (int) $existing['id'],
+            'identity_user_id' => $identityUserId,
+        ]);
+    }
+
+    $pdo->prepare(
+        'UPDATE time_calendars SET sync_token = sync_token + 1, updated_at = :updated_at WHERE id = :id'
+    )->execute(['updated_at' => $now, 'id' => $calendarId]);
+    $tokenStmt = $pdo->prepare('SELECT sync_token FROM time_calendars WHERE id = :id');
+    $tokenStmt->execute(['id' => $calendarId]);
+    $pdo->prepare(
+        'INSERT INTO time_calendar_changes (calendar_id, sync_token, uri, operation, created_at)
+         VALUES (:calendar_id, :sync_token, :uri, :operation, :created_at)'
+    )->execute([
+        'calendar_id' => $calendarId,
+        'sync_token' => (int) $tokenStmt->fetchColumn(),
+        'uri' => $uri,
+        'operation' => $existing === null ? 'created' : 'updated',
+        'created_at' => $now,
+    ]);
+}
+
+/**
+ * @return array<string, mixed>|null
+ */
+function findEventAnyStatus(PDO $pdo, string $identityUserId, int $id): ?array
+{
+    $stmt = $pdo->prepare(
+        'SELECT id, identity_user_id, calendar_id, title, description, location, starts_at, ends_at, timezone,
+                all_day, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
+         FROM time_events WHERE id = :id AND identity_user_id = :identity_user_id LIMIT 1'
+    );
+    $stmt->execute(['id' => $id, 'identity_user_id' => $identityUserId]);
+    $event = $stmt->fetch();
+    return is_array($event) ? $event : null;
 }
 
 function apiAuthClient(string $apiBaseUrl): ApiAuthClient

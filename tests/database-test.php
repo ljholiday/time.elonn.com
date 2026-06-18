@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Dotenv\Dotenv;
+use Elonn\Time\CalendarStore;
 use Elonn\Time\Database;
 
 define('BASE_PATH', dirname(__DIR__));
@@ -26,6 +27,7 @@ final class TimeDatabaseTest
         echo "Running time.elonn.local database tests...\n\n";
         $this->testConnection();
         $this->testSchema();
+        $this->testCanonicalCalendarObjectCrud();
         $this->testCalendarCrud();
         $this->testEventCrud();
         $this->testSocialImportCrud();
@@ -48,7 +50,7 @@ final class TimeDatabaseTest
     private function testSchema(): void
     {
         echo "Verifying core tables... ";
-        $required = ['time_calendars', 'time_events'];
+        $required = ['time_calendars', 'time_events', 'time_calendar_objects', 'time_calendar_changes'];
         $missing  = [];
         try {
             $stmt = $this->pdo->prepare(
@@ -68,6 +70,70 @@ final class TimeDatabaseTest
         }
     }
 
+    private function testCanonicalCalendarObjectCrud(): void
+    {
+        echo "Testing canonical appointment/task and Social authority... ";
+        $userId = 'test_' . bin2hex(random_bytes(8));
+        $now = date('Y-m-d H:i:s');
+        $calendarId = 0;
+        try {
+            $insert = $this->pdo->prepare(
+                "INSERT INTO time_calendars (identity_user_id, uri, name, status, created_at)
+                 VALUES (:uid, :uri, 'Canonical test', 'active', :now)"
+            );
+            $insert->execute(['uid' => $userId, 'uri' => 'canonical-' . bin2hex(random_bytes(5)), 'now' => $now]);
+            $calendarId = (int) $this->pdo->lastInsertId();
+            $store = new CalendarStore($this->pdo);
+            $appointment = $store->create($userId, [
+                'calendar_id' => $calendarId,
+                'component_type' => 'VEVENT',
+                'title' => 'Appointment',
+                'starts_at' => '2026-06-22 09:00:00',
+                'ends_at' => '2026-06-22 10:00:00',
+                'timezone' => 'America/Los_Angeles',
+                'alarm_trigger' => '-PT15M',
+            ]);
+            $task = $store->create($userId, [
+                'calendar_id' => $calendarId,
+                'component_type' => 'VTODO',
+                'title' => 'Task',
+                'due_at' => '2026-06-23 17:00:00',
+                'timezone' => 'America/Los_Angeles',
+                'priority' => 3,
+            ]);
+            $updatedTask = $store->update($userId, (int) $task['id'], [
+                'status' => 'completed',
+                'completed_at' => '2026-06-23 12:00:00',
+            ]);
+
+            $this->pdo->prepare(
+                "UPDATE time_calendar_objects SET source_service = 'social', source_object_type = 'event', source_object_id = 'test-social'
+                 WHERE id = :id"
+            )->execute(['id' => (int) $appointment['id']]);
+            $socialRejected = false;
+            try {
+                $store->update($userId, (int) $appointment['id'], ['title' => 'Changed in Time']);
+            } catch (\DomainException) {
+                $socialRejected = true;
+            }
+
+            $changeCount = (int) $this->pdo->query(
+                'SELECT COUNT(*) FROM time_calendar_changes WHERE calendar_id = ' . $calendarId
+            )->fetchColumn();
+            if (($updatedTask['status'] ?? '') !== 'completed' || !$socialRejected || $changeCount < 3) {
+                $this->fail('Canonical CRUD, sync changes, or Social authority did not behave as required.');
+                return;
+            }
+            $this->pass('Canonical objects, sync changes, and Social authority succeeded.');
+        } catch (\Throwable $e) {
+            $this->fail('Canonical object test threw: ' . $e->getMessage());
+        } finally {
+            if ($calendarId > 0) {
+                $this->pdo->prepare('DELETE FROM time_calendars WHERE id = :id')->execute(['id' => $calendarId]);
+            }
+        }
+    }
+
     private function testCalendarCrud(): void
     {
         echo "Testing time_calendars CRUD... ";
@@ -77,10 +143,10 @@ final class TimeDatabaseTest
             $this->pdo->beginTransaction();
 
             $insert = $this->pdo->prepare(
-                "INSERT INTO time_calendars (identity_user_id, name, status, created_at)
-                 VALUES (:uid, :name, 'active', :now)"
+                "INSERT INTO time_calendars (identity_user_id, uri, name, status, created_at)
+                 VALUES (:uid, :uri, :name, 'active', :now)"
             );
-            $insert->execute([':uid' => $userId, ':name' => 'My Calendar', ':now' => $now]);
+            $insert->execute([':uid' => $userId, ':uri' => 'my-calendar', ':name' => 'My Calendar', ':now' => $now]);
             $calId = (int) $this->pdo->lastInsertId();
 
             $sel = $this->pdo->prepare('SELECT name, status FROM time_calendars WHERE id = :id');
@@ -121,8 +187,8 @@ final class TimeDatabaseTest
             $this->pdo->beginTransaction();
 
             $calInsert = $this->pdo->prepare(
-                "INSERT INTO time_calendars (identity_user_id, name, status, created_at)
-                 VALUES (:uid, 'Test Cal', 'active', :now)"
+                "INSERT INTO time_calendars (identity_user_id, uri, name, status, created_at)
+                 VALUES (:uid, 'test-cal', 'Test Cal', 'active', :now)"
             );
             $calInsert->execute([':uid' => $userId, ':now' => $now]);
             $calId = (int) $this->pdo->lastInsertId();
@@ -170,9 +236,9 @@ final class TimeDatabaseTest
 
             $calendarInsert = $this->pdo->prepare(
                 "INSERT INTO time_calendars
-                    (identity_user_id, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at)
+                    (identity_user_id, uri, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at)
                  VALUES
-                    (:uid, 'Social events', '#7c9cff', NULL, 'active', 'social', 'event_feed', 'default', 'https://social.elonn.com/social/events', :now)"
+                    (:uid, 'social-events', 'Social events', '#7c9cff', NULL, 'active', 'social', 'event_feed', 'default', 'https://social.elonn.com/social/events', :now)"
             );
             $calendarInsert->execute([':uid' => $userId, ':now' => $now]);
             $calendarId = (int) $this->pdo->lastInsertId();
