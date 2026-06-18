@@ -28,7 +28,7 @@ $router = new Router();
 
 $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 if (isDavPath($requestPath)) {
-    handleDavRequest($config, $apiBaseUrl);
+    handleDavRequest($config, $apiBaseUrl, davBaseUri($requestPath));
     return;
 }
 
@@ -839,11 +839,30 @@ function runtimeIdentity(string $apiBaseUrl): ?array
 function isDavPath(string $path): bool
 {
     $path = '/' . trim($path, '/');
-    return $path === '/dav' || str_starts_with($path, '/dav/');
+    return $path === '/caldav'
+        || str_starts_with($path, '/caldav/')
+        || $path === '/dav'
+        || str_starts_with($path, '/dav/');
 }
 
-function handleDavRequest(array $config, string $apiBaseUrl): void
+function davBaseUri(string $path): string
 {
+    $path = '/' . trim($path, '/');
+    return $path === '/caldav' || str_starts_with($path, '/caldav/')
+        ? '/caldav/'
+        : '/dav/';
+}
+
+function handleDavRequest(array $config, string $apiBaseUrl, string $baseUri): void
+{
+    if (!class_exists('DOMDocument')) {
+        http_response_code(503);
+        header('Content-Type: application/xml; charset=utf-8');
+        echo '<?xml version="1.0" encoding="UTF-8"?>';
+        echo '<d:error xmlns:d="DAV:"><d:responsedescription>CalDAV requires the PHP DOM extension.</d:responsedescription></d:error>';
+        return;
+    }
+
     $credentials = basicAuthCredentials();
     if ($credentials === null) {
         davUnauthorized();
@@ -872,7 +891,7 @@ function handleDavRequest(array $config, string $apiBaseUrl): void
         new Sabre\DAVACL\PrincipalCollection($principalBackend),
         new Sabre\CalDAV\CalendarRoot($principalBackend, $calendarBackend),
     ]);
-    $server->setBaseUri('/dav/');
+    $server->setBaseUri($baseUri);
     $server->addPlugin(new Sabre\DAV\Auth\Plugin(
         new DavAuthBackend($credentials['username'], $principalUri),
         'Elonn Time DAV'

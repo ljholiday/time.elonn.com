@@ -4,6 +4,10 @@
 
 It owns calendar data, event data, and the Time runtime panel. Identity is validated through the shared API. Social events are ingested into Time as per-member calendar copies so members can see social events on their calendars without duplicating event authority.
 
+External CalDAV clients use `https://services.elonn.com/caldav/`.
+`https://time.elonn.com/dav/` remains a compatibility alias.
+The PHP DOM extension must be enabled for the active cPanel PHP version.
+
 ## Responsibilities
 
 - calendar and event storage

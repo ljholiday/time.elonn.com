@@ -18,7 +18,7 @@ final class ApiAuthClient
     }
 
     /**
-     * @return array{id: string, email: string, display_name: string|null}|null
+     * @return array{id: string, email: string, username: string|null, display_name: string|null}|null
      */
     public function identityForToken(string $token): ?array
     {
@@ -29,7 +29,7 @@ final class ApiAuthClient
     }
 
     /**
-     * @return array{id: string, email: string, display_name: string|null}|null
+     * @return array{id: string, email: string, username: string|null, display_name: string|null}|null
      */
     public function identityForDavCredentials(string $username, string $password): ?array
     {
@@ -95,13 +95,14 @@ final class ApiAuthClient
 
     /**
      * @param array<string, mixed> $json
-     * @return array{id: string, email: string, display_name: string|null}|null
+     * @return array{id: string, email: string, username: string|null, display_name: string|null}|null
      */
     private function identityFromJson(array $json): ?array
     {
         $id = $json['id'] ?? null;
         $email = $json['email'] ?? null;
         $displayName = $json['display_name'] ?? null;
+        $username = $json['username'] ?? null;
         if (!is_string($id) && !is_int($id)) {
             return null;
         }
@@ -113,6 +114,7 @@ final class ApiAuthClient
         return [
             'id' => (string) $id,
             'email' => $email,
+            'username' => is_string($username) ? $username : null,
             'display_name' => is_string($displayName) ? $displayName : null,
         ];
     }

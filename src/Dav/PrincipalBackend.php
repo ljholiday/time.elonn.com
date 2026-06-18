@@ -13,7 +13,7 @@ use Sabre\DAVACL\PrincipalBackend\AbstractBackend;
 final class PrincipalBackend extends AbstractBackend
 {
     /**
-     * @param array{id:string,email:string,display_name:string|null} $identity
+     * @param array{id:string,email:string,username:string|null,display_name:string|null} $identity
      */
     public function __construct(private readonly array $identity)
     {
