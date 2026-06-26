@@ -1,4 +1,5 @@
 .env
+.claude/
 composer.phar
 node_modules/
 storage/logs/*
