@@ -232,6 +232,20 @@ $router->get('/runtime/panel/time', static function () use ($config, $apiBaseUrl
     runtimePanel('Time', (string) ob_get_clean());
 });
 
+$router->get('/objects', static function () use ($config, $apiBaseUrl): void {
+    allowRuntimeOrigin();
+
+    $identity = runtimeIdentity($apiBaseUrl);
+    if ($identity === null) {
+        Response::json(['error' => 'Authentication required.'], 401);
+        return;
+    }
+
+    Response::json([
+        'objects' => (new CalendarStore(timePdo($config)))->objectSources((string) $identity['id']),
+    ]);
+});
+
 $router->post('/runtime/objects', static function () use ($config, $apiBaseUrl): void {
     allowRuntimeOrigin();
     $identity = runtimeIdentity($apiBaseUrl);

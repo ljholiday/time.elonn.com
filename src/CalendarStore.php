@@ -51,6 +51,26 @@ final class CalendarStore
         ];
     }
 
+    /** @return array{appointments: array<int, array<string, mixed>>, tasks: array<int, array<string, mixed>>} */
+    public function objectSources(string $identityUserId): array
+    {
+        $timezone = new DateTimeZone('UTC');
+        $now = new DateTimeImmutable('now', $timezone);
+        $appointments = $this->objectsInRange($identityUserId, $now, $now->add(new DateInterval('P90D')), $timezone);
+        $tasks = $this->tasks($identityUserId, null);
+
+        return [
+            'appointments' => array_map(
+                fn (array $object): array => $this->calendarObjectSource($object),
+                $appointments
+            ),
+            'tasks' => array_map(
+                fn (array $object): array => $this->calendarObjectSource($object),
+                $tasks
+            ),
+        ];
+    }
+
     /**
      * @param array<string, mixed> $fields
      * @return array<string, mixed>
@@ -346,6 +366,89 @@ final class CalendarStore
                 ? ['calendar_id', 'local_visibility', 'alarm_trigger']
                 : ['calendar_id', 'title', 'description', 'location', 'starts_at', 'ends_at', 'due_at', 'completed_at', 'all_day', 'status', 'priority', 'recurrence_rule', 'alarm_trigger'],
         ];
+    }
+
+    /** @param array<string, mixed> $object */
+    private function calendarObjectSource(array $object): array
+    {
+        $id = (string) ($object['id'] ?? '');
+        $componentType = (string) ($object['component_type'] ?? '');
+        $objectType = $componentType === 'VTODO' ? 'task' : 'calendar_event';
+        $editableFields = is_array($object['editable_fields'] ?? null) ? $object['editable_fields'] : [];
+        $canMutate = $editableFields !== [];
+
+        return [
+            'source' => [
+                'service' => 'time',
+                'resource_type' => $objectType,
+                'resource_id' => $id,
+            ],
+            'object_type' => $objectType,
+            'title' => (string) ($object['title'] ?? ($objectType === 'task' ? 'Task' : 'Calendar event')),
+            'summary' => $this->calendarObjectSummary($object),
+            'state' => $object,
+            'domain_permissions' => [
+                'can_view' => true,
+                'can_update' => $canMutate,
+                'can_delete' => !is_array($object['source'] ?? null),
+            ],
+            'domain_actions' => [
+                [
+                    'id' => 'open_time_object',
+                    'type' => 'open_object',
+                    'label' => 'Open',
+                    'availability' => 'enabled',
+                ],
+                [
+                    'id' => 'update_time_object',
+                    'type' => 'update_object',
+                    'label' => 'Update',
+                    'availability' => $canMutate ? 'enabled' : 'denied',
+                    'controls' => $this->calendarObjectControls($object),
+                ],
+                [
+                    'id' => 'delete_time_object',
+                    'type' => 'delete_object',
+                    'label' => 'Delete',
+                    'availability' => is_array($object['source'] ?? null) ? 'denied' : 'enabled',
+                ],
+            ],
+            'relationships' => [],
+        ];
+    }
+
+    /** @param array<string, mixed> $object */
+    private function calendarObjectSummary(array $object): string
+    {
+        $parts = array_values(array_filter([
+            (string) ($object['starts_at'] ?? $object['due_at'] ?? ''),
+            (string) ($object['location'] ?? ''),
+            (string) ($object['calendar_name'] ?? ''),
+        ]));
+
+        return implode(' · ', $parts);
+    }
+
+    /** @param array<string, mixed> $object */
+    private function calendarObjectControls(array $object): array
+    {
+        $editable = is_array($object['editable_fields'] ?? null) ? $object['editable_fields'] : [];
+        $controls = [];
+        foreach ($editable as $field) {
+            $field = (string) $field;
+            $controls[] = [
+                'id' => $field,
+                'type' => match ($field) {
+                    'description' => 'textarea',
+                    'all_day' => 'checkbox',
+                    default => 'text',
+                },
+                'label' => ucwords(str_replace('_', ' ', $field)),
+                'required' => in_array($field, ['calendar_id', 'title'], true),
+            ];
+        }
+
+        return $controls;
     }
 
     private function touchCalendar(int $calendarId, string $uri, string $operation): void
