@@ -50,8 +50,6 @@ ELONN_SOCIAL_BASE_URL=
 ELONN_SOCIAL_INGEST_TOKEN=
 ```
 
-The repo-specific guidance file is [`time.elonn.md`](./time.elonn.md).
-
 ## Migrations
 
 Run migrations with:
@@ -62,3 +60,12 @@ php scripts/migrate.php status
 ```
 
 Add a new SQL file when schema or seed behavior changes. Do not edit applied migrations.
+
+## Verification
+
+```bash
+find public src templates scripts config -name '*.php' -print0 | xargs -0 -n1 php -l
+```
+
+Local: `http://time.elonn.local/`, `http://time.elonn.local/ready`
+Production: `https://time.elonn.com/`, `https://time.elonn.com/ready`
