@@ -7,6 +7,7 @@ use Dotenv\Dotenv;
 
 define('BASE_PATH', dirname(__DIR__));
 
+try {
 require BASE_PATH . '/vendor/autoload.php';
 
 Dotenv::createImmutable(BASE_PATH)->safeLoad();
@@ -90,3 +91,7 @@ foreach ($files as $file) {
 }
 
 echo $ran === 0 ? "No pending migrations.\n" : "Applied {$ran} migration(s).\n";
+} catch (Throwable $throwable) {
+    fwrite(STDERR, 'Migration failed: ' . $throwable->getMessage() . "\n");
+    exit(1);
+}
