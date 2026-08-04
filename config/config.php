@@ -24,6 +24,9 @@ return [
         'social_base_url' => time_service_base_url('ELONN_SOCIAL_BASE_URL', $environment, 'https://social.elonn.local', 'https://social.elonn.com'),
         'social_ingest_token' => time_string_config('ELONN_SOCIAL_INGEST_TOKEN', ''),
     ],
+    'service_auth' => [
+        'mind.elonn' => time_string_config('ELONN_MIND_SERVICE_TOKEN'),
+    ],
 ];
 
 function time_string_config(string $key, string $default = ''): string

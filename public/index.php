@@ -72,6 +72,43 @@ $router->get('/ready', static function () use ($config, $apiBaseUrl): void {
     ], $ready ? 200 : 500);
 });
 
+$router->post('/time/call', static function () use ($config): void {
+    $caller = timeServiceCaller($config);
+    if ($caller === null) {
+        timeServiceDatasetError('time.service_auth_failed', 'auth', 'Time service authentication failed.', 401);
+        return;
+    }
+
+    $memberId = $caller['member_id'];
+    if ($memberId === '') {
+        timeServiceDatasetError('time.member_required', 'auth', 'Time search requires authenticated member identity.', 400, $caller['service']);
+        return;
+    }
+
+    $input = requestInput();
+    $content = is_array($input['content'] ?? null) ? $input['content'] : [];
+    $operation = (string) ($content['operation'] ?? '');
+    $limit = max(1, min(25, (int) ($content['limit'] ?? 10)));
+    $pdo = timePdo($config);
+
+    if ($operation === 'time.search') {
+        $text = trim((string) ($content['text'] ?? ''));
+        if ($text === '') {
+            timeServiceDatasetError('time.invalid_search_call', 'invalid_call', 'Time search requires text.', 422, $caller['service']);
+            return;
+        }
+        Response::json(timeServiceDataset(timeSearchObjects($pdo, $memberId, $text, $limit), 'time.search', $caller['service'], $text));
+        return;
+    }
+
+    if ($operation === 'time.list') {
+        Response::json(timeServiceDataset(timeRecentObjects($pdo, $memberId, $limit), 'time.list', $caller['service'], ''));
+        return;
+    }
+
+    timeServiceDatasetError('time.unsupported_operation', 'invalid_call', 'Time operation is not supported.', 422, $caller['service']);
+});
+
 $router->post('/integrations/social/events', static function () use ($config): void {
     if (!requireSocialIngestToken($config)) {
         Response::json(['error' => 'Forbidden.'], 403);
@@ -780,6 +817,181 @@ $router->dispatch(
     $_SERVER['REQUEST_METHOD'] ?? 'GET',
     $requestPath
 );
+
+/**
+ * @param array<string, mixed> $config
+ * @return array{service:string,member_id:string}|null
+ */
+function timeServiceCaller(array $config): ?array
+{
+    $service = trim((string) ($_SERVER['HTTP_X_ELONN_SERVICE'] ?? ''));
+    $token = trim((string) ($_SERVER['HTTP_X_ELONN_SERVICE_TOKEN'] ?? ''));
+    $authorization = trim((string) ($_SERVER['HTTP_AUTHORIZATION'] ?? ''));
+    if ($token === '' && str_starts_with($authorization, 'Bearer ')) {
+        $token = trim(substr($authorization, 7));
+    }
+    $expected = (string) (($config['service_auth'][$service] ?? '') ?: '');
+    if ($service === '' || $token === '' || $expected === '' || !hash_equals($expected, $token)) {
+        return null;
+    }
+
+    return [
+        'service' => $service,
+        'member_id' => trim((string) ($_SERVER['HTTP_X_ELONN_MEMBER_ID'] ?? '')),
+    ];
+}
+
+/** @return array<int, array<string, mixed>> */
+function timeSearchObjects(PDO $pdo, string $memberId, string $text, int $limit): array
+{
+    $like = '%' . str_replace(['%', '_'], ['\%', '\_'], mb_strtolower($text)) . '%';
+    $stmt = $pdo->prepare(
+        'SELECT id, identity_user_id, calendar_id, uri, uid, component_type, title, description, location,
+                starts_at, ends_at, due_at, completed_at, timezone, all_day, status, priority,
+                source_service, source_object_type, source_object_id, source_url, created_at, updated_at,
+                CASE
+                    WHEN LOWER(title) = :exact THEN 1.0
+                    WHEN LOWER(title) LIKE :title_prefix THEN 0.86
+                    WHEN LOWER(title) LIKE :title_like THEN 0.74
+                    WHEN LOWER(COALESCE(description, "")) LIKE :description_like THEN 0.62
+                    WHEN LOWER(COALESCE(location, "")) LIKE :location_like THEN 0.58
+                    ELSE 0.0
+                END AS search_confidence
+         FROM time_calendar_objects
+         WHERE identity_user_id = :member_id
+           AND status <> "deleted"
+           AND (
+                LOWER(title) LIKE :title_filter
+                OR LOWER(COALESCE(description, "")) LIKE :description_filter
+                OR LOWER(COALESCE(location, "")) LIKE :location_filter
+           )
+         ORDER BY search_confidence DESC, COALESCE(starts_at, due_at, updated_at, created_at) DESC, id DESC
+         LIMIT ' . max(1, min(25, $limit))
+    );
+    $stmt->execute([
+        'member_id' => $memberId,
+        'exact' => mb_strtolower($text),
+        'title_prefix' => mb_strtolower($text) . '%',
+        'title_like' => $like,
+        'description_like' => $like,
+        'location_like' => $like,
+        'title_filter' => $like,
+        'description_filter' => $like,
+        'location_filter' => $like,
+    ]);
+
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/** @return array<int, array<string, mixed>> */
+function timeRecentObjects(PDO $pdo, string $memberId, int $limit): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT id, identity_user_id, calendar_id, uri, uid, component_type, title, description, location,
+                starts_at, ends_at, due_at, completed_at, timezone, all_day, status, priority,
+                source_service, source_object_type, source_object_id, source_url, created_at, updated_at,
+                0.5 AS search_confidence
+         FROM time_calendar_objects
+         WHERE identity_user_id = :member_id
+           AND status <> "deleted"
+         ORDER BY COALESCE(starts_at, due_at, updated_at, created_at) DESC, id DESC
+         LIMIT ' . max(1, min(25, $limit))
+    );
+    $stmt->execute(['member_id' => $memberId]);
+
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/**
+ * @param array<int, array<string, mixed>> $rows
+ * @return array<string, mixed>
+ */
+function timeServiceDataset(array $rows, string $operation, string $caller, string $text): array
+{
+    $objects = [];
+    $placements = [];
+    foreach ($rows as $row) {
+        $id = 'time.calendar_object:' . (string) $row['id'];
+        $objects[] = [
+            'id' => $id,
+            'type' => 'time.calendar_object',
+            'title' => (string) $row['title'],
+            'summary' => (string) ($row['description'] ?? ''),
+            'content' => [
+                'name' => (string) $row['title'],
+                'description' => (string) ($row['description'] ?? ''),
+                'component_type' => (string) $row['component_type'],
+                'location' => $row['location'] ?? null,
+                'starts_at' => $row['starts_at'] ?? null,
+                'ends_at' => $row['ends_at'] ?? null,
+                'due_at' => $row['due_at'] ?? null,
+                'completed_at' => $row['completed_at'] ?? null,
+                'source' => [
+                    'service' => $row['source_service'] ?? null,
+                    'object_type' => $row['source_object_type'] ?? null,
+                    'object_id' => $row['source_object_id'] ?? null,
+                    'url' => $row['source_url'] ?? null,
+                ],
+                'search' => [
+                    'confidence' => (float) ($row['search_confidence'] ?? 0.5),
+                    'index_status' => 'ready',
+                ],
+            ],
+            'resources' => [],
+        ];
+        $placements[] = ['id' => 'placement:' . $id . ':workspace', 'type' => 'workspace', 'content' => ['object' => $id]];
+    }
+    $collectionId = 'collection:time.search:' . bin2hex(random_bytes(8));
+    $summary = count($objects) === 0
+        ? ($text !== '' ? 'No Time objects matched "' . $text . '".' : 'No Time objects are available.')
+        : count($objects) . ' Time objects matched.';
+
+    return [
+        'id' => 'dataset:service:time:' . bin2hex(random_bytes(16)),
+        'type' => 'service',
+        'scope' => count($objects) === 1 ? 'object' : 'collection',
+        'mode' => 'snapshot',
+        'created' => gmdate('c'),
+        'objects' => $objects,
+        'actions' => [],
+        'relationships' => [],
+        'collections' => count($objects) !== 1 ? [[
+            'id' => $collectionId,
+            'type' => 'time.search.results',
+            'title' => $text !== '' ? 'Time results for ' . $text : 'Time results',
+            'summary' => $summary,
+            'items' => array_map(static fn (array $object): string => (string) $object['id'], $objects),
+            'content' => ['query' => $text, 'count' => count($objects), 'description' => $summary],
+        ]] : [],
+        'resources' => [],
+        'placements' => count($objects) !== 1 ? [[
+            'id' => 'placement:time.search.results:workspace',
+            'type' => 'workspace',
+            'content' => ['collection' => $collectionId],
+        ]] : $placements,
+        'errors' => [],
+        'context' => ['service' => 'time', 'operation' => $operation, 'caller' => $caller],
+    ];
+}
+
+function timeServiceDatasetError(string $code, string $class, string $message, int $status, string $caller = ''): void
+{
+    Response::json([
+        'id' => 'dataset:service:time:' . bin2hex(random_bytes(16)),
+        'type' => 'service',
+        'scope' => 'error',
+        'mode' => 'snapshot',
+        'created' => gmdate('c'),
+        'objects' => [],
+        'actions' => [],
+        'relationships' => [],
+        'collections' => [],
+        'resources' => [],
+        'placements' => [],
+        'errors' => [['code' => $code, 'class' => $class, 'message' => $message]],
+        'context' => ['service' => 'time', 'caller' => $caller],
+    ], $status);
+}
 
 /**
  * @param array{database: array{driver:string, host:string, port:int, name:string, username:string, password:string, charset:string}} $config
