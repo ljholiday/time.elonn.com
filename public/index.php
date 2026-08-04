@@ -21,7 +21,7 @@ require BASE_PATH . '/vendor/autoload.php';
 Dotenv::createImmutable(BASE_PATH)->safeLoad();
 $config = require BASE_PATH . '/config/config.php';
 
-redirectToHttps();
+redirectToHttps($config['app']['url']);
 
 $apiBaseUrl = $config['services']['api_base_url'];
 $router = new Router();
@@ -1075,21 +1075,35 @@ function allowRuntimeOrigin(): void
     }
 }
 
-function redirectToHttps(): void
+function redirectToHttps(string $canonicalUrl): void
 {
     if (currentScheme() === 'https') {
         return;
     }
 
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    if (!is_string($host) || $host === '') {
+    $target = timeHttpsRedirectTarget($canonicalUrl);
+    if ($target === null) {
         return;
     }
 
-    $uri = $_SERVER['REQUEST_URI'] ?? '/';
     http_response_code(308);
-    header('Location: https://' . $host . (is_string($uri) ? $uri : '/'));
+    header('Location: ' . $target);
     exit;
+}
+
+function timeHttpsRedirectTarget(string $canonicalUrl): ?string
+{
+    $uri = $_SERVER['REQUEST_URI'] ?? '/';
+    $path = is_string($uri) && str_starts_with($uri, '/') ? $uri : '/';
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $host = is_string($host) ? strtolower(explode(':', $host, 2)[0]) : '';
+
+    if (in_array($host, ['time.elonn.local', 'time.elonn.com'], true)) {
+        return 'https://' . $host . $path;
+    }
+
+    $canonical = rtrim($canonicalUrl, '/');
+    return $canonical === '' ? null : $canonical . $path;
 }
 
 function accountLoginUrl(): string

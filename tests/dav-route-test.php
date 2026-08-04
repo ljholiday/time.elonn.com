@@ -16,6 +16,10 @@ $checks = [
     'Missing PHP DOM is reported explicitly' =>
         str_contains($index, "class_exists('DOMDocument')")
         && str_contains($index, 'CalDAV requires the PHP DOM extension.'),
+    'HTTPS redirects are canonical-host bounded' =>
+        str_contains($index, 'timeHttpsRedirectTarget')
+        && str_contains($index, "'time.elonn.local', 'time.elonn.com'")
+        && !str_contains($index, "header('Location: https://' . \$host"),
 ];
 
 $failed = 0;
