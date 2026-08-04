@@ -2,10 +2,12 @@
 
 `time.elonn.local` is the calendar and scheduling service for Elonn.
 
-It owns calendar data, event data, and the Time runtime panel. Identity is validated through the shared API. Social events are ingested into Time as per-member calendar copies so members can see social events on their calendars without duplicating event authority.
+It owns calendar data, event data, CalDAV access, and Time object sources.
+Identity is validated through the shared API. Social events are ingested into
+Time as per-member calendar copies so members can see social events on their
+calendars without duplicating event authority.
 
-External CalDAV clients use `https://services.elonn.com/caldav/`.
-`https://time.elonn.com/dav/` remains a compatibility alias.
+External CalDAV clients use `https://time.elonn.com/dav/`.
 The PHP DOM extension must be enabled for the active cPanel PHP version.
 
 ## Responsibilities
@@ -13,7 +15,7 @@ The PHP DOM extension must be enabled for the active cPanel PHP version.
 - calendar and event storage
 - authenticated calendar/event APIs
 - Social event ingestion for calendar mirrors
-- runtime panel rendering for the Web shell
+- Time-owned object sources for World/runtime composition
 - identity checks through `api.elonn`
 
 ## Routes
@@ -26,7 +28,6 @@ The PHP DOM extension must be enabled for the active cPanel PHP version.
 - `GET /events`
 - `POST /events`
 - `POST /integrations/social/events`
-- `GET /runtime/panel/time`
 - `POST /runtime/calendars`
 
 ## Configuration
