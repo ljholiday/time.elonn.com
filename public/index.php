@@ -711,32 +711,54 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
     $placements = [];
     foreach ($rows as $row) {
         $id = 'time.calendar_object:' . (string) $row['id'];
+        $componentType = (string) $row['component_type'];
+        $objectType = $componentType === 'VTODO' ? 'time.task' : 'time.calendar_event';
+        $sourceUrl = trim((string) ($row['source_url'] ?? ''));
         $objects[] = [
             'id' => $id,
-            'type' => 'time.calendar_object',
+            'type' => $objectType,
             'title' => (string) $row['title'],
             'summary' => (string) ($row['description'] ?? ''),
             'content' => [
                 'name' => (string) $row['title'],
                 'description' => (string) ($row['description'] ?? ''),
-                'component_type' => (string) $row['component_type'],
+                'component_type' => $componentType,
                 'location' => $row['location'] ?? null,
                 'starts_at' => $row['starts_at'] ?? null,
                 'ends_at' => $row['ends_at'] ?? null,
                 'due_at' => $row['due_at'] ?? null,
                 'completed_at' => $row['completed_at'] ?? null,
+                'all_day' => (bool) ($row['all_day'] ?? false),
+                'status' => (string) ($row['status'] ?? ''),
+                'priority' => $row['priority'] ?? null,
                 'source' => [
                     'service' => $row['source_service'] ?? null,
                     'object_type' => $row['source_object_type'] ?? null,
                     'object_id' => $row['source_object_id'] ?? null,
-                    'url' => $row['source_url'] ?? null,
+                    'url' => $sourceUrl !== '' ? $sourceUrl : null,
                 ],
                 'search' => [
                     'confidence' => (float) ($row['search_confidence'] ?? 0.5),
                     'index_status' => 'ready',
+                    'why' => 'Matched calendar object title, description, or location.',
+                ],
+                'actions' => [
+                    ['id' => 'open_time_object', 'type' => 'open_object', 'label' => 'Open', 'availability' => 'enabled'],
+                    ['id' => 'update_time_object', 'type' => 'update_object', 'label' => 'Update', 'availability' => 'enabled'],
                 ],
             ],
-            'resources' => [],
+            'permissions' => ['can_view' => true, 'can_act' => true, 'can_share' => false],
+            'resources' => $sourceUrl !== '' ? ['resource:' . $id . ':source'] : [],
+            'actions' => [
+                'local' => [
+                    ['id' => 'open_time_object', 'type' => 'open_object', 'label' => 'Open', 'availability' => 'enabled'],
+                    ['id' => 'update_time_object', 'type' => 'update_object', 'label' => 'Update', 'availability' => 'enabled'],
+                ],
+                'inbound' => [],
+                'outbound' => [],
+            ],
+            'relationships' => [],
+            'metadata' => ['service' => 'time', 'source_id' => (string) $row['id'], 'uid' => (string) ($row['uid'] ?? '')],
         ];
         $placements[] = ['id' => 'placement:' . $id . ':workspace', 'type' => 'workspace', 'content' => ['object' => $id]];
     }
@@ -752,7 +774,7 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
         'mode' => 'snapshot',
         'created' => gmdate('c'),
         'objects' => $objects,
-        'actions' => [],
+        'actions' => timeDatasetActions($objects),
         'relationships' => [],
         'collections' => count($objects) !== 1 ? [[
             'id' => $collectionId,
@@ -762,15 +784,72 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
             'items' => array_map(static fn (array $object): string => (string) $object['id'], $objects),
             'content' => ['query' => $text, 'count' => count($objects), 'description' => $summary],
         ]] : [],
-        'resources' => [],
+        'resources' => timeDatasetResources($objects),
         'placements' => count($objects) !== 1 ? [[
             'id' => 'placement:time.search.results:workspace',
             'type' => 'workspace',
             'content' => ['collection' => $collectionId],
         ]] : $placements,
         'errors' => [],
-        'context' => ['service' => 'time', 'operation' => $operation, 'caller' => $caller],
+        'context' => [
+            'service' => 'time',
+            'operation' => $operation,
+            'caller' => $caller,
+            'search' => ['query_text' => $text, 'result_count' => count($objects)],
+        ],
     ];
+}
+
+/**
+ * @param array<int, array<string, mixed>> $objects
+ * @return array<int, array<string, mixed>>
+ */
+function timeDatasetActions(array $objects): array
+{
+    $actions = [];
+    foreach ($objects as $object) {
+        foreach ((array) ($object['actions']['local'] ?? []) as $sourceAction) {
+            if (!is_array($sourceAction) || trim((string) ($sourceAction['id'] ?? '')) === '') {
+                continue;
+            }
+            $actions[] = [
+                'id' => 'action:' . $object['id'] . ':' . $sourceAction['id'],
+                'type' => (string) ($sourceAction['type'] ?? 'open_object'),
+                'target' => (string) $object['id'],
+                'content' => ['label' => (string) ($sourceAction['label'] ?? 'Open')],
+                'availability' => ['state' => (string) ($sourceAction['availability'] ?? 'enabled')],
+            ];
+        }
+    }
+
+    return $actions;
+}
+
+/**
+ * @param array<int, array<string, mixed>> $objects
+ * @return array<int, array<string, mixed>>
+ */
+function timeDatasetResources(array $objects): array
+{
+    $resources = [];
+    foreach ($objects as $object) {
+        $href = trim((string) ($object['content']['source']['url'] ?? ''));
+        if ($href === '') {
+            continue;
+        }
+        $resources[] = [
+            'id' => 'resource:' . $object['id'] . ':source',
+            'type' => 'resource',
+            'content' => [
+                'kind' => 'link',
+                'href' => $href,
+                'label' => (string) ($object['title'] ?? 'Source'),
+                'media_type' => 'text/html',
+            ],
+        ];
+    }
+
+    return $resources;
 }
 
 function timeServiceDatasetError(string $code, string $class, string $message, int $status, string $caller = ''): void
