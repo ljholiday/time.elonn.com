@@ -11,6 +11,7 @@ use Elonn\Time\Dav\PrincipalBackend as DavPrincipalBackend;
 use Elonn\Time\Database;
 use Elonn\Time\Response;
 use Elonn\Time\Router;
+use Elonn\Time\ServiceDescriptor;
 use Elonn\Time\View;
 use Dotenv\Dotenv;
 
@@ -37,6 +38,10 @@ $router->get('/health', static function (): void {
         'status' => 'ok',
         'service' => 'elonn_time',
     ]);
+});
+
+$router->get('/descriptor', static function (): void {
+    Response::json(ServiceDescriptor::payload());
 });
 
 $router->get('/ready', static function () use ($config, $apiBaseUrl): void {

@@ -2,15 +2,24 @@
 
 declare(strict_types=1);
 
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+use Elonn\Time\ServiceDescriptor;
+
 $root = dirname(__DIR__);
 $public = file_get_contents($root . '/public/index.php') ?: '';
 $store = file_get_contents($root . '/src/CalendarStore.php') ?: '';
 $runtimePanelRoute = '/runtime/' . 'panel/time';
 $worldPanelRoute = '/world/' . 'panels/time';
+$descriptor = ServiceDescriptor::payload();
 
 $checks = [
     'publishes canonical Time service call route' => str_contains($public, "/time/call")
         && str_contains($public, 'timeServiceDataset('),
+    'Time publishes a Mind-facing service descriptor' => str_contains($public, "/descriptor")
+        && ($descriptor['service'] ?? '') === 'time'
+        && isset($descriptor['operations']['time.search']['supports'])
+        && ($descriptor['operations']['time.search']['required']['text'] ?? '') === 'non_empty_string',
     'object sources include appointments and tasks' => str_contains($store, "'appointments'")
         && str_contains($store, "'tasks'")
         && str_contains($store, 'calendarObjectSource'),
