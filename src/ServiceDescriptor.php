@@ -24,6 +24,15 @@ final class ServiceDescriptor
                     'cost' => 'low',
                     'side_effects' => [],
                     'required' => ['text' => 'non_empty_string'],
+                    'input_schema' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'text' => ['type' => 'string'],
+                            'limit' => ['type' => 'integer'],
+                        ],
+                        'required' => ['text'],
+                        'additionalProperties' => false,
+                    ],
                 ],
                 'time.list' => [
                     'description' => 'Show recent calendar events and tasks for the member.',
@@ -31,6 +40,13 @@ final class ServiceDescriptor
                     'returns' => ['objects' => ['Calendar Event', 'Task']],
                     'cost' => 'low',
                     'side_effects' => [],
+                    'input_schema' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'limit' => ['type' => 'integer'],
+                        ],
+                        'additionalProperties' => false,
+                    ],
                 ],
             ],
         ];
