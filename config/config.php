@@ -26,6 +26,7 @@ return [
     ],
     'service_auth' => [
         'mind.elonn' => time_string_config('ELONN_MIND_SERVICE_TOKEN'),
+        'admin.elonn' => time_string_config('ELONN_ADMIN_SERVICE_TOKEN'),
     ],
 ];
 

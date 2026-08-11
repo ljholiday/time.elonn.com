@@ -77,6 +77,33 @@ $router->get('/ready', static function () use ($config, $apiBaseUrl): void {
     ], $ready ? 200 : 500);
 });
 
+$router->get('/metrics', static function () use ($config): void {
+    $startedAt = microtime(true);
+    if ((timeServiceCaller($config)['service'] ?? '') !== 'admin.elonn') {
+        timeMetricsAuthFailed();
+        return;
+    }
+
+    $database = 'error';
+    try {
+        timePdo($config)->query('SELECT 1');
+        $database = 'connected';
+    } catch (Throwable $throwable) {
+        error_log('[time] /metrics DB check failed: ' . $throwable->getMessage());
+    }
+
+    Response::json([
+        'contract_version' => '1.0',
+        'service' => 'time.elonn',
+        'status' => $database === 'connected' ? 'ok' : 'degraded',
+        'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
+        'response_time_ms' => round((microtime(true) - $startedAt) * 1000, 2),
+        'custom_metrics' => [
+            'database' => $database,
+        ],
+    ]);
+});
+
 $router->post('/time/call', static function () use ($config): void {
     $caller = timeServiceCaller($config);
     if ($caller === null) {
@@ -1859,4 +1886,15 @@ function apiAuthClient(string $apiBaseUrl): ApiAuthClient
     }
 
     return $clients[$apiBaseUrl];
+}
+
+function timeMetricsAuthFailed(): void
+{
+    Response::json([
+        'errors' => [[
+            'code' => 'time.service_auth_failed',
+            'class' => 'auth',
+            'message' => 'Authenticated admin service request is required.',
+        ]],
+    ], 401);
 }
