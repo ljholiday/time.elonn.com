@@ -1,0 +1,112 @@
+{
+  "service": {
+    "id": "time.elonn",
+    "name": "Time",
+    "domain": "calendar",
+    "purpose": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar objects. Does not own Social events (social.event, owned by social.elonn) -- Social events synced into a member's calendar arrive here only as ingested calendar objects with a source reference back to Social."
+  },
+  "contract": {
+    "revision": 1,
+    "published": "2026-08-22T00:00:00Z"
+  },
+  "invocation": {
+    "base_url": "https://time.elonn.com"
+  },
+  "authentication": {
+    "required": true,
+    "scheme": "elonn-signed-request"
+  },
+  "endpoints": [
+    {
+      "id": "time.call",
+      "method": "POST",
+      "path": "/time/call",
+      "purpose": "Accept one authenticated canonical Call for Time operations and return one canonical Service Dataset.",
+      "operations": [
+        {
+          "id": "time.search",
+          "purpose": "Search the member's own calendar objects (events and tasks) by title, description, or location.",
+          "model_selectable": true,
+          "arguments": {
+            "text": {"type": "string", "required": true, "source": "model"},
+            "limit": {"type": "integer", "required": false, "source": "model", "default": 10}
+          }
+        },
+        {
+          "id": "time.list",
+          "purpose": "Show the member's recent calendar objects (events and tasks).",
+          "model_selectable": true,
+          "arguments": {
+            "limit": {"type": "integer", "required": false, "source": "model", "default": 10}
+          }
+        },
+        {
+          "id": "time.open",
+          "purpose": "Open a single calendar object already identified by a prior Dataset action.",
+          "model_selectable": false,
+          "arguments": {
+            "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"}
+          }
+        }
+      ],
+      "request": {
+        "structure": "Call"
+      },
+      "response": {
+        "structure": "Dataset"
+      },
+      "authorization": [
+        "conductor.elonn",
+        "mind.elonn"
+      ],
+      "side_effects": false,
+      "privacy": [
+        "Calendar object access is scoped to the authenticated member identity supplied by the calling platform service -- every query filters by identity_user_id, no cross-member visibility exists."
+      ],
+      "errors": [
+        "time.service_auth_failed",
+        "time.member_required",
+        "time.unsupported_operation",
+        "time.invalid_search_call",
+        "time.object_not_found"
+      ]
+    }
+  ],
+  "structures": {
+    "canonical": [
+      "Call",
+      "Dataset"
+    ],
+    "service": [
+      "time.calendar_event object",
+      "time.task object"
+    ]
+  },
+  "errors": [
+    {
+      "code": "time.service_auth_failed",
+      "class": "auth",
+      "message": "Authenticated Conductor or Mind service request is required."
+    },
+    {
+      "code": "time.member_required",
+      "class": "auth",
+      "message": "Time Call requires authenticated member identity."
+    },
+    {
+      "code": "time.unsupported_operation",
+      "class": "invalid_call",
+      "message": "Time operation is not supported."
+    },
+    {
+      "code": "time.invalid_search_call",
+      "class": "invalid_call",
+      "message": "Time search requires text."
+    },
+    {
+      "code": "time.object_not_found",
+      "class": "not_found",
+      "message": "Time object was not found."
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "service": {
+    "id": "time.elonn",
+    "name": "Time",
+    "domain": "calendar",
+    "description": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar."
+  },
+  "capabilities": [
+    {
+      "id": "calendar_object_search",
+      "description": "Search the member's own calendar objects (events and tasks) by title, description, or location."
+    },
+    {
+      "id": "calendar_object_list",
+      "description": "List the member's recent calendar objects."
+    },
+    {
+      "id": "calendar_object_open",
+      "description": "Open a single calendar object already identified by a prior Dataset action."
+    }
+  ],
+  "contract": {
+    "json": "https://time.elonn.com/time.json",
+    "markdown": "https://time.elonn.com/time.md",
+    "revision": 1
+  },
+  "published": "2026-08-22T00:00:00Z"
+}
