@@ -25,8 +25,8 @@ return [
         'social_ingest_token' => time_string_config('ELONN_SOCIAL_INGEST_TOKEN', ''),
     ],
     'service_auth' => [
-        'mind.elonn' => time_string_config('ELONN_MIND_SERVICE_TOKEN'),
-        'admin.elonn' => time_string_config('ELONN_ADMIN_SERVICE_TOKEN'),
+        'mind.elonn' => time_string_config('ELONN_MIND_TIME_TOKEN'),
+        'admin.elonn' => time_string_config('ELONN_ADMIN_TIME_TOKEN'),
     ],
 ];
 
