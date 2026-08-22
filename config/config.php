@@ -27,6 +27,13 @@ return [
     'service_auth' => [
         'mind.elonn' => time_string_config('ELONN_MIND_TIME_TOKEN'),
         'admin.elonn' => time_string_config('ELONN_ADMIN_TIME_TOKEN'),
+        'conductor_keys_url' => rtrim(
+            time_string_config(
+                'CONDUCTOR_SERVICE_KEYS_URL',
+                time_peer_url('conductor', $environment) . '/.well-known/elonn-service-keys.json'
+            ),
+            '/'
+        ),
     ],
 ];
 
@@ -59,4 +66,15 @@ function time_service_base_url(string $key, string $environment, string $localDe
         : $productionDefault;
 
     return rtrim(time_string_config($key, $default), '/');
+}
+
+/**
+ * Derives a compliant peer's address purely from its name and this Service's own environment
+ * classification -- never a separately hand-typed URL literal to keep in sync per Service.
+ */
+function time_peer_url(string $peerName, string $environment): string
+{
+    $local = in_array(strtolower($environment), ['local', 'development', 'dev', 'testing'], true);
+
+    return 'https://' . $peerName . '.elonn.' . ($local ? 'local' : 'com');
 }

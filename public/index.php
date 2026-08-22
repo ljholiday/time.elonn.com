@@ -79,7 +79,7 @@ $router->get('/ready', static function () use ($config, $apiBaseUrl): void {
 
 $router->get('/metrics', static function () use ($config): void {
     $startedAt = microtime(true);
-    if ((timeServiceCaller($config)['service'] ?? '') !== 'admin.elonn') {
+    if ((timeServiceCaller($config, 'GET', '/metrics', '')['service'] ?? '') !== 'admin.elonn') {
         timeMetricsAuthFailed();
         return;
     }
@@ -105,7 +105,8 @@ $router->get('/metrics', static function () use ($config): void {
 });
 
 $router->post('/time/call', static function () use ($config): void {
-    $caller = timeServiceCaller($config);
+    $rawBody = (string) file_get_contents('php://input');
+    $caller = timeServiceCaller($config, 'POST', '/time/call', $rawBody);
     if ($caller === null) {
         timeServiceDatasetError('time.service_auth_failed', 'auth', 'Time service authentication failed.', 401);
         return;
@@ -117,7 +118,8 @@ $router->post('/time/call', static function () use ($config): void {
         return;
     }
 
-    $input = requestInput();
+    $input = json_decode($rawBody, true);
+    $input = is_array($input) ? $input : [];
     $content = is_array($input['content'] ?? null) ? $input['content'] : [];
     $operation = (string) ($content['operation'] ?? '');
     $limit = max(1, min(25, (int) ($content['limit'] ?? 10)));
@@ -135,6 +137,23 @@ $router->post('/time/call', static function () use ($config): void {
 
     if ($operation === 'time.list') {
         Response::json(timeServiceDataset(timeRecentObjects($pdo, $memberId, $limit), 'time.list', $caller['service'], ''));
+        return;
+    }
+
+    if ($operation === 'time.open') {
+        $objectId = trim((string) ($content['object_id'] ?? ''));
+        $parts = explode(':', $objectId, 2);
+        $numericId = $parts[0] === 'time.calendar_object' ? positiveInt($parts[1] ?? null) : null;
+        if ($numericId === null) {
+            timeServiceDatasetError('time.object_not_found', 'not_found', 'Time object was not found.', 404, $caller['service']);
+            return;
+        }
+        $row = timeFetchObject($pdo, $memberId, $numericId);
+        if ($row === null) {
+            timeServiceDatasetError('time.object_not_found', 'not_found', 'Time object was not found.', 404, $caller['service']);
+            return;
+        }
+        Response::json(timeOpenDataset($row, 'time.open', $caller['service']));
         return;
     }
 
@@ -653,23 +672,14 @@ $router->dispatch(
  * @param array<string, mixed> $config
  * @return array{service:string,member_id:string}|null
  */
-function timeServiceCaller(array $config): ?array
+function timeServiceCaller(array $config, string $method = 'GET', string $path = '/', string $body = ''): ?array
 {
-    $service = trim((string) ($_SERVER['HTTP_X_ELONN_SERVICE'] ?? ''));
-    $token = trim((string) ($_SERVER['HTTP_X_ELONN_SERVICE_TOKEN'] ?? ''));
-    $authorization = trim((string) ($_SERVER['HTTP_AUTHORIZATION'] ?? ''));
-    if ($token === '' && str_starts_with($authorization, 'Bearer ')) {
-        $token = trim(substr($authorization, 7));
-    }
-    $expected = (string) (($config['service_auth'][$service] ?? '') ?: '');
-    if ($service === '' || $token === '' || $expected === '' || !hash_equals($expected, $token)) {
-        return null;
-    }
+    $serviceAuth = (array) ($config['service_auth'] ?? []);
+    $verifier = new \Elonn\Time\SignedRequestVerifier((string) ($serviceAuth['conductor_keys_url'] ?? ''));
+    $tokens = $serviceAuth;
+    unset($tokens['conductor_keys_url']);
 
-    return [
-        'service' => $service,
-        'member_id' => trim((string) ($_SERVER['HTTP_X_ELONN_MEMBER_ID'] ?? '')),
-    ];
+    return (new \Elonn\Time\ServiceAuthenticator($tokens, $verifier))->authenticate($method, $path, $body);
 }
 
 /** @return array<int, array<string, mixed>> */
@@ -733,6 +743,94 @@ function timeRecentObjects(PDO $pdo, string $memberId, int $limit): array
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+/** @return array<string, mixed>|null */
+function timeFetchObject(PDO $pdo, string $memberId, int $id): ?array
+{
+    $stmt = $pdo->prepare(
+        'SELECT id, identity_user_id, calendar_id, uri, uid, component_type, title, description, location,
+                starts_at, ends_at, due_at, completed_at, timezone, all_day, status, priority,
+                source_service, source_object_type, source_object_id, source_url, created_at, updated_at,
+                1.0 AS search_confidence
+         FROM time_calendar_objects
+         WHERE id = :id AND identity_user_id = :member_id AND status <> "deleted"'
+    );
+    $stmt->execute(['id' => $id, 'member_id' => $memberId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    return $row === false ? null : $row;
+}
+
+/** @param array<string, mixed> $row @return array<string, mixed> */
+function timeOpenDataset(array $row, string $operation, string $caller): array
+{
+    $object = timeObjectFromRow($row);
+
+    return [
+        'id' => 'dataset:service:time:' . bin2hex(random_bytes(16)),
+        'type' => 'service',
+        'scope' => 'object',
+        'mode' => 'snapshot',
+        'created' => gmdate('c'),
+        'objects' => [$object],
+        'actions' => timeDatasetActions([$object]),
+        'relationships' => [],
+        'collections' => [],
+        'resources' => timeDatasetResources([$object]),
+        'placements' => [['id' => 'placement:' . $object['id'] . ':carry', 'type' => 'carry', 'content' => ['object' => $object['id']]]],
+        'errors' => [],
+        'context' => ['service' => 'time', 'operation' => $operation, 'caller' => $caller],
+    ];
+}
+
+/** @param array<string, mixed> $row @return array<string, mixed> */
+function timeObjectFromRow(array $row): array
+{
+    $id = 'time.calendar_object:' . (string) $row['id'];
+    $componentType = (string) $row['component_type'];
+    $objectType = $componentType === 'VTODO' ? 'time.task' : 'time.calendar_event';
+    $sourceUrl = trim((string) ($row['source_url'] ?? ''));
+
+    return [
+        'id' => $id,
+        'type' => $objectType,
+        'title' => (string) $row['title'],
+        'summary' => (string) ($row['description'] ?? ''),
+        'content' => [
+            'name' => (string) $row['title'],
+            'description' => (string) ($row['description'] ?? ''),
+            'component_type' => $componentType,
+            'location' => $row['location'] ?? null,
+            'starts_at' => $row['starts_at'] ?? null,
+            'ends_at' => $row['ends_at'] ?? null,
+            'due_at' => $row['due_at'] ?? null,
+            'completed_at' => $row['completed_at'] ?? null,
+            'all_day' => (bool) ($row['all_day'] ?? false),
+            'status' => (string) ($row['status'] ?? ''),
+            'priority' => $row['priority'] ?? null,
+            'source' => [
+                'service' => $row['source_service'] ?? null,
+                'object_type' => $row['source_object_type'] ?? null,
+                'object_id' => $row['source_object_id'] ?? null,
+                'url' => $sourceUrl !== '' ? $sourceUrl : null,
+            ],
+            'search' => [
+                'confidence' => (float) ($row['search_confidence'] ?? 0.5),
+                'index_status' => 'ready',
+                'why' => 'Matched calendar object title, description, or location.',
+            ],
+        ],
+        'permissions' => ['can_view' => true, 'can_act' => true, 'can_share' => false],
+        'resources' => $sourceUrl !== '' ? ['resource:' . $id . ':source'] : [],
+        'actions' => [
+            'local' => timeObjectActions($id),
+            'inbound' => [],
+            'outbound' => [],
+        ],
+        'relationships' => [],
+        'metadata' => ['service' => 'time', 'source_id' => (string) $row['id'], 'uid' => (string) ($row['uid'] ?? '')],
+    ];
+}
+
 /**
  * @param array<int, array<string, mixed>> $rows
  * @return array<string, mixed>
@@ -742,57 +840,9 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
     $objects = [];
     $placements = [];
     foreach ($rows as $row) {
-        $id = 'time.calendar_object:' . (string) $row['id'];
-        $componentType = (string) $row['component_type'];
-        $objectType = $componentType === 'VTODO' ? 'time.task' : 'time.calendar_event';
-        $sourceUrl = trim((string) ($row['source_url'] ?? ''));
-        $objects[] = [
-            'id' => $id,
-            'type' => $objectType,
-            'title' => (string) $row['title'],
-            'summary' => (string) ($row['description'] ?? ''),
-            'content' => [
-                'name' => (string) $row['title'],
-                'description' => (string) ($row['description'] ?? ''),
-                'component_type' => $componentType,
-                'location' => $row['location'] ?? null,
-                'starts_at' => $row['starts_at'] ?? null,
-                'ends_at' => $row['ends_at'] ?? null,
-                'due_at' => $row['due_at'] ?? null,
-                'completed_at' => $row['completed_at'] ?? null,
-                'all_day' => (bool) ($row['all_day'] ?? false),
-                'status' => (string) ($row['status'] ?? ''),
-                'priority' => $row['priority'] ?? null,
-                'source' => [
-                    'service' => $row['source_service'] ?? null,
-                    'object_type' => $row['source_object_type'] ?? null,
-                    'object_id' => $row['source_object_id'] ?? null,
-                    'url' => $sourceUrl !== '' ? $sourceUrl : null,
-                ],
-                'search' => [
-                    'confidence' => (float) ($row['search_confidence'] ?? 0.5),
-                    'index_status' => 'ready',
-                    'why' => 'Matched calendar object title, description, or location.',
-                ],
-                'actions' => [
-                    ['id' => 'open_time_object', 'type' => 'open_object', 'label' => 'Open', 'availability' => 'enabled'],
-                    ['id' => 'update_time_object', 'type' => 'update_object', 'label' => 'Update', 'availability' => 'enabled'],
-                ],
-            ],
-            'permissions' => ['can_view' => true, 'can_act' => true, 'can_share' => false],
-            'resources' => $sourceUrl !== '' ? ['resource:' . $id . ':source'] : [],
-            'actions' => [
-                'local' => [
-                    ['id' => 'open_time_object', 'type' => 'open_object', 'label' => 'Open', 'availability' => 'enabled'],
-                    ['id' => 'update_time_object', 'type' => 'update_object', 'label' => 'Update', 'availability' => 'enabled'],
-                ],
-                'inbound' => [],
-                'outbound' => [],
-            ],
-            'relationships' => [],
-            'metadata' => ['service' => 'time', 'source_id' => (string) $row['id'], 'uid' => (string) ($row['uid'] ?? '')],
-        ];
-        $placements[] = ['id' => 'placement:' . $id . ':workspace', 'type' => 'workspace', 'content' => ['object' => $id]];
+        $object = timeObjectFromRow($row);
+        $objects[] = $object;
+        $placements[] = ['id' => 'placement:' . $object['id'] . ':workspace', 'type' => 'workspace', 'content' => ['object' => $object['id']]];
     }
     $collectionId = 'collection:time.search:' . bin2hex(random_bytes(8));
     $summary = count($objects) === 0
@@ -833,6 +883,29 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
 }
 
 /**
+ * The one real action every Time calendar object carries -- a real Contract operation_invocation,
+ * not a dead href into time.elonn.local's own REST routes, which a browser talking only to
+ * web.elonn.local can never reach directly.
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function timeObjectActions(string $id): array
+{
+    return [[
+        'id' => 'open_time_object',
+        'type' => 'open_object',
+        'label' => 'Open',
+        'operation_invocation' => [
+            'service' => 'time.elonn',
+            'operation' => 'time.open',
+            'object_id' => $id,
+            'payload' => [],
+        ],
+        'availability' => 'enabled',
+    ]];
+}
+
+/**
  * @param array<int, array<string, mixed>> $objects
  * @return array<int, array<string, mixed>>
  */
@@ -848,7 +921,12 @@ function timeDatasetActions(array $objects): array
                 'id' => 'action:' . $object['id'] . ':' . $sourceAction['id'],
                 'type' => (string) ($sourceAction['type'] ?? 'open_object'),
                 'target' => (string) $object['id'],
-                'content' => ['label' => (string) ($sourceAction['label'] ?? 'Open')],
+                'content' => [
+                    'label' => (string) ($sourceAction['label'] ?? 'Open'),
+                    'operation_invocation' => is_array($sourceAction['operation_invocation'] ?? null)
+                        ? $sourceAction['operation_invocation']
+                        : [],
+                ],
                 'availability' => ['state' => (string) ($sourceAction['availability'] ?? 'enabled')],
             ];
         }
