@@ -838,11 +838,8 @@ function timeObjectFromRow(array $row): array
 function timeServiceDataset(array $rows, string $operation, string $caller, string $text): array
 {
     $objects = [];
-    $placements = [];
     foreach ($rows as $row) {
-        $object = timeObjectFromRow($row);
-        $objects[] = $object;
-        $placements[] = ['id' => 'placement:' . $object['id'] . ':workspace', 'type' => 'workspace', 'content' => ['object' => $object['id']]];
+        $objects[] = timeObjectFromRow($row);
     }
     $collectionId = 'collection:time.search:' . bin2hex(random_bytes(8));
     $summary = count($objects) === 0
@@ -867,11 +864,8 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
             'content' => ['query' => $text, 'count' => count($objects), 'description' => $summary],
         ]] : [],
         'resources' => timeDatasetResources($objects),
-        'placements' => count($objects) !== 1 ? [[
-            'id' => 'placement:time.search.results:workspace',
-            'type' => 'workspace',
-            'content' => ['collection' => $collectionId],
-        ]] : $placements,
+        // A search/list result places nothing: its Objects are unplaced Findings.
+        'placements' => [],
         'errors' => [],
         'context' => [
             'service' => 'time',
