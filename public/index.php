@@ -1089,6 +1089,19 @@ function handleDavRequest(array $config, string $apiBaseUrl, string $baseUri): v
     }
 
     $credentials = basicAuthCredentials();
+
+    // OPTIONS is an unauthenticated capability probe (RFC 4918 10.1). Answer it
+    // directly so clients see the DAV feature set; authenticated OPTIONS still
+    // falls through to SabreDAV for the precise per-node Allow header.
+    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS' && $credentials === null) {
+        http_response_code(200);
+        header('Allow: OPTIONS, GET, HEAD, POST, PUT, DELETE, PROPFIND, PROPPATCH, REPORT, MKCOL, MKCALENDAR, MOVE, COPY');
+        header('DAV: 1, 3, extended-mkcol, calendar-access');
+        header('MS-Author-Via: DAV');
+        header('Content-Length: 0');
+        return;
+    }
+
     if ($credentials === null) {
         davUnauthorized();
         return;

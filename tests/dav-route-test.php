@@ -17,6 +17,9 @@ $checks = [
         str_contains($index, "=== '/.well-known/caldav'")
         && str_contains($index, 'wellKnownCalDavRedirect($requestPath)')
         && str_contains($index, "true, 301"),
+    'Unauthenticated OPTIONS probe is answered without a challenge' =>
+        str_contains($index, "=== 'OPTIONS' && \$credentials === null")
+        && str_contains($index, 'DAV: 1, 3, extended-mkcol, calendar-access'),
     'Missing PHP DOM is reported explicitly' =>
         str_contains($index, "class_exists('DOMDocument')")
         && str_contains($index, 'CalDAV requires the PHP DOM extension.'),
