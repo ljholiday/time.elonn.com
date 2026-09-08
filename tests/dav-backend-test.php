@@ -39,15 +39,31 @@ try {
         'timezone' => 'America/Los_Angeles',
     ], 'dav-appointment@elonn');
     $updatedEtag = $backend->updateCalendarObject($calendarId, 'appointment.ics', $updated);
+
+    // Initial sync (no token) reports objects that currently exist, and only
+    // in 'added'.
+    $initialSync = $backend->getChangesForCalendar($calendarId, null, 1);
+
+    // Incremental sync collapses the create + update into a single bucket
+    // (last change wins), so the uri is in 'modified' and not also 'added'.
     $changes = $backend->getChangesForCalendar($calendarId, 1, 1);
     $backend->deleteCalendarObject($calendarId, 'appointment.ics');
     $deletedChanges = $backend->getChangesForCalendar($calendarId, $changes['syncToken'], 1);
 
+    // After a create + delete, a fresh initial sync must not surface the uri
+    // at all (regression: phantom additions from replaying the change log).
+    $afterDeleteSync = $backend->getChangesForCalendar($calendarId, null, 1);
+
     $passed = is_array($object)
         && $createdEtag !== $updatedEtag
-        && in_array('appointment.ics', $changes['added'], true)
+        && in_array('appointment.ics', $initialSync['added'], true)
+        && [] === $initialSync['modified']
+        && [] === $initialSync['deleted']
+        && !in_array('appointment.ics', $changes['added'], true)
         && in_array('appointment.ics', $changes['modified'], true)
-        && in_array('appointment.ics', $deletedChanges['deleted'], true);
+        && in_array('appointment.ics', $deletedChanges['deleted'], true)
+        && !in_array('appointment.ics', $afterDeleteSync['added'], true)
+        && !in_array('appointment.ics', $afterDeleteSync['deleted'], true);
 } catch (Throwable $error) {
     echo 'FAIL: DAV backend CRUD and sync (' . $error->getMessage() . ')' . PHP_EOL;
 } finally {

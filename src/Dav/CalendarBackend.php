@@ -205,8 +205,34 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
     public function getChangesForCalendar($calendarId, $syncToken, $syncLevel, $limit = null): array
     {
         $calendar = $this->calendarRow((int) $calendarId);
+        if ($calendar === null) {
+            return ['syncToken' => 1, 'added' => [], 'modified' => [], 'deleted' => []];
+        }
         $currentToken = (int) ($calendar['sync_token'] ?? 1);
-        $token = $syncToken === null ? 0 : (int) $syncToken;
+
+        // Initial sync: report the objects that currently exist rather than
+        // replaying the change log, which would surface objects that were
+        // created and later deleted as phantom additions.
+        if (!$syncToken) {
+            $stmt = $this->pdo->prepare(
+                'SELECT uri FROM time_calendar_objects
+                 WHERE calendar_id = :calendar_id AND identity_user_id = :identity_user_id
+                 ORDER BY id'
+            );
+            $stmt->execute([
+                'calendar_id' => (int) $calendarId,
+                'identity_user_id' => $this->identityUserId,
+            ]);
+            return [
+                'syncToken' => $currentToken,
+                'added' => $stmt->fetchAll(\PDO::FETCH_COLUMN),
+                'modified' => [],
+                'deleted' => [],
+            ];
+        }
+
+        // Incremental sync: collapse repeated changes per uri so the last
+        // change wins and each uri lands in exactly one bucket.
         $sql = 'SELECT uri, operation FROM time_calendar_changes
                 WHERE calendar_id = :calendar_id AND sync_token > :sync_token
                 ORDER BY sync_token';
@@ -214,24 +240,31 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             $sql .= ' LIMIT ' . max(1, (int) $limit);
         }
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute(['calendar_id' => (int) $calendarId, 'sync_token' => $token]);
+        $stmt->execute(['calendar_id' => (int) $calendarId, 'sync_token' => (int) $syncToken]);
+
+        $lastOperation = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $lastOperation[$row['uri']] = $row['operation'];
+        }
+
         $added = [];
         $modified = [];
         $deleted = [];
-        foreach ($stmt->fetchAll() as $row) {
-            if ($row['operation'] === 'created') {
-                $added[] = $row['uri'];
-            } elseif ($row['operation'] === 'deleted') {
-                $deleted[] = $row['uri'];
+        foreach ($lastOperation as $uri => $operation) {
+            if ($operation === 'created') {
+                $added[] = $uri;
+            } elseif ($operation === 'deleted') {
+                $deleted[] = $uri;
             } else {
-                $modified[] = $row['uri'];
+                $modified[] = $uri;
             }
         }
+
         return [
             'syncToken' => $currentToken,
-            'added' => array_values(array_unique($added)),
-            'modified' => array_values(array_unique($modified)),
-            'deleted' => array_values(array_unique($deleted)),
+            'added' => $added,
+            'modified' => $modified,
+            'deleted' => $deleted,
         ];
     }
 
