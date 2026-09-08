@@ -33,6 +33,12 @@ if (isDavPath($requestPath)) {
     return;
 }
 
+$wellKnownDav = wellKnownCalDavRedirect($requestPath);
+if ($wellKnownDav !== null) {
+    header('Location: ' . rtrim($config['app']['url'], '/') . $wellKnownDav, true, 301);
+    return;
+}
+
 $router->get('/health', static function (): void {
     Response::json([
         'status' => 'ok',
@@ -1059,6 +1065,17 @@ function davBaseUri(string $path): string
     return $path === '/caldav' || str_starts_with($path, '/caldav/')
         ? '/caldav/'
         : '/dav/';
+}
+
+/**
+ * RFC 6764 service discovery: map /.well-known/caldav to the CalDAV context path
+ * so clients given only the bare host can find the collection root.
+ */
+function wellKnownCalDavRedirect(string $path): ?string
+{
+    return '/' . trim($path, '/') === '/.well-known/caldav'
+        ? '/dav/'
+        : null;
 }
 
 function handleDavRequest(array $config, string $apiBaseUrl, string $baseUri): void

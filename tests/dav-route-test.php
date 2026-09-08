@@ -13,6 +13,10 @@ $checks = [
     'SabreDAV base URI follows the public path' =>
         str_contains($index, 'davBaseUri($requestPath)')
         && str_contains($index, '$server->setBaseUri($baseUri)'),
+    'RFC 6764 well-known CalDAV redirect is served' =>
+        str_contains($index, "=== '/.well-known/caldav'")
+        && str_contains($index, 'wellKnownCalDavRedirect($requestPath)')
+        && str_contains($index, "true, 301"),
     'Missing PHP DOM is reported explicitly' =>
         str_contains($index, "class_exists('DOMDocument')")
         && str_contains($index, 'CalDAV requires the PHP DOM extension.'),
