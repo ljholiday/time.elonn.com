@@ -917,15 +917,19 @@ function timeDatasetActions(array $objects): array
             if (!is_array($sourceAction) || trim((string) ($sourceAction['id'] ?? '')) === '') {
                 continue;
             }
+            $invocation = $sourceAction['operation_invocation'] ?? null;
+            if (!is_array($invocation) || $invocation === []) {
+                // An Action is invoked only through its operation_invocation
+                // (dev.elonn canonical/action.md); one without is not emitted.
+                continue;
+            }
             $actions[] = [
                 'id' => 'action:' . $object['id'] . ':' . $sourceAction['id'],
                 'type' => (string) ($sourceAction['type'] ?? 'open_object'),
                 'target' => (string) $object['id'],
                 'content' => [
                     'label' => (string) ($sourceAction['label'] ?? 'Open'),
-                    'operation_invocation' => is_array($sourceAction['operation_invocation'] ?? null)
-                        ? $sourceAction['operation_invocation']
-                        : [],
+                    'operation_invocation' => $invocation,
                 ],
                 'availability' => ['state' => (string) ($sourceAction['availability'] ?? 'enabled')],
             ];
