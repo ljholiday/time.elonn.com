@@ -8,6 +8,7 @@ $calendars = is_array($data['calendars'] ?? null) ? $data['calendars'] : [];
     <div>
         <p class="time-kicker">Events</p>
         <h1>New event</h1>
+        <p class="time-copy">Create a Time-owned calendar event. Social-owned event mirrors stay read-only here.</p>
     </div>
 </section>
 
@@ -32,23 +33,25 @@ $calendars = is_array($data['calendars'] ?? null) ? $data['calendars'] : [];
         </label>
         <label>
             Title
-            <input name="title" required value="<?= htmlspecialchars((string) ($old['title'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+            <input name="title" required autocomplete="off" value="<?= html((string) ($old['title'] ?? '')) ?>">
         </label>
-        <label>
-            Starts
-            <input name="starts_at" type="datetime-local" required value="<?= htmlspecialchars((string) ($old['starts_at'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
-        </label>
-        <label>
-            Ends
-            <input name="ends_at" type="datetime-local" required value="<?= htmlspecialchars((string) ($old['ends_at'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
-        </label>
+        <div class="time-form-grid">
+            <label>
+                Starts
+                <input name="starts_at" type="datetime-local" required value="<?= html((string) ($old['starts_at'] ?? '')) ?>">
+            </label>
+            <label>
+                Ends
+                <input name="ends_at" type="datetime-local" required value="<?= html((string) ($old['ends_at'] ?? '')) ?>">
+            </label>
+        </div>
         <label>
             Location
-            <input name="location" value="<?= htmlspecialchars((string) ($old['location'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">
+            <input name="location" autocomplete="street-address" value="<?= html((string) ($old['location'] ?? '')) ?>">
         </label>
         <label>
             Description
-            <textarea name="description"><?= htmlspecialchars((string) ($old['description'] ?? ''), ENT_QUOTES, 'UTF-8') ?></textarea>
+            <textarea name="description"><?= html((string) ($old['description'] ?? '')) ?></textarea>
         </label>
         <button type="submit">Create event</button>
     </form>

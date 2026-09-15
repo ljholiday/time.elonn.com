@@ -42,6 +42,7 @@ $shareImage = 'https://elonn.com/assets/img/elonn-logo.png';
     <header class="time-topbar">
         <a class="time-brand" href="/">Elonn Time</a>
         <nav class="time-nav" aria-label="Primary">
+            <a href="/planner">Planner</a>
             <a href="/calendars">Calendars</a>
             <a href="/events">Events</a>
             <a href="/calendars/new">New calendar</a>

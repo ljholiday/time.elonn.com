@@ -23,10 +23,17 @@ The PHP DOM extension must be enabled for the active cPanel PHP version.
 - `GET /health`
 - `GET /ready`
 - `GET /`
+- `GET /planner`
 - `GET /calendars`
 - `POST /calendars`
+- `GET /calendars/{id}/edit`
+- `POST /calendars/{id}/edit`
+- `POST /calendars/{id}/delete`
 - `GET /events`
 - `POST /events`
+- `GET /events/{id}/edit`
+- `POST /events/{id}/edit`
+- `POST /events/{id}/delete`
 - `POST /integrations/social/events`
 - `POST /runtime/calendars`
 

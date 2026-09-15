@@ -27,6 +27,15 @@ $checks = [
         && str_contains($store, "'domain_permissions'")
         && str_contains($store, "'source'")
         && str_contains($store, "'object_type'"),
+    'HTML Planner renders CalendarStore workspace data' => str_contains($public, "\$router->get('/planner'")
+        && str_contains($public, ")->workspace(\$identity['id'], \$view, \$anchorDate, \$timezone)")
+        && is_file($root . '/templates/planner.php'),
+    'HTML calendars and events expose edit flows' => str_contains($public, "\$router->get('/calendars/{id}/edit'")
+        && str_contains($public, "\$router->post('/calendars/{id}/edit'")
+        && str_contains($public, "\$router->post('/events/{id}/edit'")
+        && str_contains($public, "\$router->post('/events/{id}/delete'")
+        && is_file($root . '/templates/calendars/edit.php')
+        && is_file($root . '/templates/events/edit.php'),
     'object source route is runtime-neutral' => str_contains($public, "'objects' => \$objects")
         && !str_contains($public, "'{$runtimePanelRoute}'")
         && !str_contains($public, $worldPanelRoute)

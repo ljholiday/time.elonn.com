@@ -217,10 +217,34 @@ $router->get('/', static function () use ($config, $apiBaseUrl): void {
     }
 
     $pdo = timePdo($config);
+    $events = listEvents($pdo, $identity['id'], null);
     renderApp('Dashboard', 'home.php', $identity, [
         'calendars' => listCalendars($pdo, $identity['id']),
-        'events' => listEvents($pdo, $identity['id'], null),
+        'events' => $events,
+        'upcoming_events' => upcomingEvents($events, 5),
+        'upcoming_event_count' => count(upcomingEvents($events, PHP_INT_MAX)),
     ]);
+});
+
+$router->get('/planner', static function () use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $view = plannerView($_GET['view'] ?? null);
+    $anchorDate = plannerAnchorDate($_GET['date'] ?? null);
+    $timezone = plannerTimezone($_GET['timezone'] ?? null);
+    $workspace = (new CalendarStore(timePdo($config)))->workspace($identity['id'], $view, $anchorDate, $timezone);
+
+    if (isBrowserRequest()) {
+        renderApp('Planner', 'planner.php', $identity, [
+            'workspace' => $workspace,
+        ]);
+        return;
+    }
+
+    Response::json(['workspace' => $workspace]);
 });
 
 $router->post('/runtime/calendars', static function () use ($config, $apiBaseUrl): void {
@@ -350,6 +374,107 @@ $router->get('/calendars/{id}', static function (array $params) use ($config, $a
     Response::json(['calendar' => calendarPayload($calendar)]);
 });
 
+$router->get('/calendars/{id}/edit', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $calendar = findCalendar(timePdo($config), $identity['id'], positiveInt($params['id'] ?? null));
+    if ($calendar === null) {
+        renderApp('Calendar not found', 'calendars/edit.php', $identity, [
+            'error' => 'Calendar not found.',
+            'calendar' => null,
+            'old' => [],
+        ], 404);
+        return;
+    }
+
+    renderApp('Edit calendar', 'calendars/edit.php', $identity, [
+        'error' => null,
+        'calendar' => $calendar,
+        'old' => calendarFormOld($calendar),
+    ]);
+});
+
+$router->post('/calendars/{id}/edit', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $calendarId = positiveInt($params['id'] ?? null);
+    $calendar = findCalendar($pdo, $identity['id'], $calendarId);
+    if ($calendar === null) {
+        renderApp('Calendar not found', 'calendars/edit.php', $identity, [
+            'error' => 'Calendar not found.',
+            'calendar' => null,
+            'old' => [],
+        ], 404);
+        return;
+    }
+
+    $input = requestInput();
+    $name = cleanString($input['name'] ?? null);
+    $status = cleanString($input['status'] ?? null) ?? (string) $calendar['status'];
+    $old = formOld($input, ['name', 'description', 'color', 'timezone', 'status']);
+
+    if ($name === null) {
+        renderApp('Edit calendar', 'calendars/edit.php', $identity, [
+            'error' => 'Calendar name is required.',
+            'calendar' => $calendar,
+            'old' => $old,
+        ], 400);
+        return;
+    }
+
+    if (!in_array($status, ['active', 'archived'], true)) {
+        renderApp('Edit calendar', 'calendars/edit.php', $identity, [
+            'error' => 'Calendar status must be active or archived.',
+            'calendar' => $calendar,
+            'old' => $old,
+        ], 400);
+        return;
+    }
+
+    updateCalendar($pdo, $identity['id'], $calendarId, [
+        'name' => $name,
+        'description' => cleanOptionalString($input['description'] ?? null),
+        'color' => cleanOptionalString($input['color'] ?? null),
+        'timezone' => cleanOptionalString($input['timezone'] ?? null),
+        'status' => $status,
+    ]);
+
+    redirect('/calendars');
+});
+
+$router->post('/calendars/{id}/delete', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $calendarId = positiveInt($params['id'] ?? null);
+    $calendar = findCalendar($pdo, $identity['id'], $calendarId);
+    if ($calendar === null) {
+        Response::json(['error' => 'Calendar not found.'], 404);
+        return;
+    }
+    if (($calendar['source_service'] ?? null) === 'social') {
+        renderApp('Edit calendar', 'calendars/edit.php', $identity, [
+            'error' => 'The Social mirror calendar cannot be deleted from Time.',
+            'calendar' => $calendar,
+            'old' => calendarFormOld($calendar),
+        ], 409);
+        return;
+    }
+
+    deleteCalendar($pdo, $identity['id'], $calendarId);
+    redirect('/calendars');
+});
+
 $router->patch('/calendars/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
@@ -380,20 +505,12 @@ $router->patch('/calendars/{id}', static function (array $params) use ($config, 
         return;
     }
 
-    $stmt = $pdo->prepare(
-        "UPDATE time_calendars
-         SET name = :name, description = :description, color = :color, timezone = :timezone, status = :status, updated_at = :updated_at
-         WHERE id = :id AND identity_user_id = :identity_user_id"
-    );
-    $stmt->execute([
-        ':name' => $name,
-        ':description' => $description,
-        ':color' => $color,
-        ':timezone' => $timezone,
-        ':status' => $status,
-        ':updated_at' => now(),
-        ':id' => $calendarId,
-        ':identity_user_id' => $identity['id'],
+    updateCalendar($pdo, $identity['id'], $calendarId, [
+        'name' => $name,
+        'description' => $description,
+        'color' => $color,
+        'timezone' => $timezone,
+        'status' => $status,
     ]);
 
     Response::json(['calendar' => calendarPayload(findCalendar($pdo, $identity['id'], $calendarId))]);
@@ -417,16 +534,7 @@ $router->delete('/calendars/{id}', static function (array $params) use ($config,
         return;
     }
 
-    $stmt = $pdo->prepare(
-        "UPDATE time_calendars
-         SET status = 'deleted', updated_at = :updated_at
-         WHERE id = :id AND identity_user_id = :identity_user_id"
-    );
-    $stmt->execute([
-        ':updated_at' => now(),
-        ':id' => $calendarId,
-        ':identity_user_id' => $identity['id'],
-    ]);
+    deleteCalendar($pdo, $identity['id'], $calendarId);
 
     Response::json(['status' => 'deleted']);
 });
@@ -438,10 +546,15 @@ $router->get('/events', static function () use ($config, $apiBaseUrl): void {
     }
 
     $calendarId = positiveInt($_GET['calendar_id'] ?? null);
-    $events = listEvents(timePdo($config), $identity['id'], $calendarId);
+    $pdo = timePdo($config);
+    $events = listEvents($pdo, $identity['id'], $calendarId);
 
     if (isBrowserRequest()) {
-        renderApp('Events', 'events/index.php', $identity, ['events' => $events]);
+        renderApp('Events', 'events/index.php', $identity, [
+            'events' => $events,
+            'calendars' => listCalendars($pdo, $identity['id']),
+            'selected_calendar_id' => $calendarId,
+        ]);
         return;
     }
 
@@ -563,6 +676,132 @@ $router->get('/events/{id}', static function (array $params) use ($config, $apiB
     Response::json(['event' => eventPayload($event)]);
 });
 
+$router->get('/events/{id}/edit', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $event = findEvent($pdo, $identity['id'], positiveInt($params['id'] ?? null));
+    if ($event === null) {
+        renderApp('Event not found', 'events/edit.php', $identity, [
+            'error' => 'Event not found.',
+            'event' => null,
+            'old' => [],
+            'calendars' => listCalendars($pdo, $identity['id']),
+        ], 404);
+        return;
+    }
+
+    renderApp('Edit event', 'events/edit.php', $identity, [
+        'error' => null,
+        'event' => $event,
+        'old' => eventFormOld($event),
+        'calendars' => listCalendars($pdo, $identity['id']),
+    ]);
+});
+
+$router->post('/events/{id}/edit', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $eventId = positiveInt($params['id'] ?? null);
+    $event = findEvent($pdo, $identity['id'], $eventId);
+    $calendars = listCalendars($pdo, $identity['id']);
+    if ($event === null) {
+        renderApp('Event not found', 'events/edit.php', $identity, [
+            'error' => 'Event not found.',
+            'event' => null,
+            'old' => [],
+            'calendars' => $calendars,
+        ], 404);
+        return;
+    }
+    if (($event['source_service'] ?? null) === 'social') {
+        renderApp('Edit event', 'events/edit.php', $identity, [
+            'error' => 'Social event mirrors are read-only in Time. Edit the Social event at its source.',
+            'event' => $event,
+            'old' => eventFormOld($event),
+            'calendars' => $calendars,
+        ], 409);
+        return;
+    }
+
+    $input = requestInput();
+    $calendarId = positiveInt($input['calendar_id'] ?? null);
+    $title = cleanString($input['title'] ?? null);
+    $startsAt = normalizeDateTime($input['starts_at'] ?? null);
+    $endsAt = normalizeDateTime($input['ends_at'] ?? null);
+    $status = cleanString($input['status'] ?? null) ?? (string) $event['status'];
+    $old = formOld($input, ['calendar_id', 'title', 'starts_at', 'ends_at', 'location', 'description', 'timezone', 'status', 'all_day']);
+
+    $error = null;
+    if ($calendarId === null || findCalendar($pdo, $identity['id'], $calendarId) === null) {
+        $error = 'Valid calendar is required.';
+    } elseif ($title === null || $startsAt === null || $endsAt === null) {
+        $error = 'Title, starts, and ends are required.';
+    } elseif ($endsAt <= $startsAt) {
+        $error = 'Event end must be after start.';
+    } elseif (!in_array($status, ['active', 'cancelled'], true)) {
+        $error = 'Event status must be active or cancelled.';
+    }
+
+    if ($error !== null) {
+        renderApp('Edit event', 'events/edit.php', $identity, [
+            'error' => $error,
+            'event' => $event,
+            'old' => $old,
+            'calendars' => $calendars,
+        ], 400);
+        return;
+    }
+
+    updateEvent($pdo, $identity['id'], $eventId, [
+        'calendar_id' => $calendarId,
+        'title' => $title,
+        'description' => cleanOptionalString($input['description'] ?? null),
+        'location' => cleanOptionalString($input['location'] ?? null),
+        'starts_at' => $startsAt,
+        'ends_at' => $endsAt,
+        'timezone' => cleanOptionalString($input['timezone'] ?? null),
+        'all_day' => truthy($input['all_day'] ?? false) ? 1 : 0,
+        'status' => $status,
+    ]);
+
+    redirect('/events');
+});
+
+$router->post('/events/{id}/delete', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $eventId = positiveInt($params['id'] ?? null);
+    $event = findEvent($pdo, $identity['id'], $eventId);
+    if ($event === null) {
+        Response::json(['error' => 'Event not found.'], 404);
+        return;
+    }
+    if (($event['source_service'] ?? null) === 'social') {
+        renderApp('Edit event', 'events/edit.php', $identity, [
+            'error' => 'Social event mirrors cannot be deleted from Time.',
+            'event' => $event,
+            'old' => eventFormOld($event),
+            'calendars' => listCalendars($pdo, $identity['id']),
+        ], 409);
+        return;
+    }
+
+    deleteEvent($pdo, $identity['id'], $eventId, $event);
+    redirect('/events');
+});
+
 $router->patch('/events/{id}', static function (array $params) use ($config, $apiBaseUrl): void {
     $identity = requireIdentity($apiBaseUrl);
     if ($identity === null) {
@@ -603,39 +842,19 @@ $router->patch('/events/{id}', static function (array $params) use ($config, $ap
         return;
     }
 
-    $stmt = $pdo->prepare(
-        "UPDATE time_events
-         SET calendar_id = :calendar_id,
-             title = :title,
-             description = :description,
-             location = :location,
-             starts_at = :starts_at,
-             ends_at = :ends_at,
-             timezone = :timezone,
-             all_day = :all_day,
-             status = :status,
-             updated_at = :updated_at
-         WHERE id = :id AND identity_user_id = :identity_user_id"
-    );
-    $stmt->execute([
-        ':calendar_id' => $calendarId,
-        ':title' => $title,
-        ':description' => array_key_exists('description', $input) ? cleanOptionalString($input['description']) : $event['description'],
-        ':location' => array_key_exists('location', $input) ? cleanOptionalString($input['location']) : $event['location'],
-        ':starts_at' => $startsAt,
-        ':ends_at' => $endsAt,
-        ':timezone' => array_key_exists('timezone', $input) ? cleanOptionalString($input['timezone']) : $event['timezone'],
-        ':all_day' => array_key_exists('all_day', $input) ? (truthy($input['all_day']) ? 1 : 0) : (int) $event['all_day'],
-        ':status' => $status,
-        ':updated_at' => now(),
-        ':id' => $eventId,
-        ':identity_user_id' => $identity['id'],
+    updateEvent($pdo, $identity['id'], $eventId, [
+        'calendar_id' => $calendarId,
+        'title' => $title,
+        'description' => array_key_exists('description', $input) ? cleanOptionalString($input['description']) : $event['description'],
+        'location' => array_key_exists('location', $input) ? cleanOptionalString($input['location']) : $event['location'],
+        'starts_at' => $startsAt,
+        'ends_at' => $endsAt,
+        'timezone' => array_key_exists('timezone', $input) ? cleanOptionalString($input['timezone']) : $event['timezone'],
+        'all_day' => array_key_exists('all_day', $input) ? (truthy($input['all_day']) ? 1 : 0) : (int) $event['all_day'],
+        'status' => $status,
     ]);
 
     $updated = findEvent($pdo, $identity['id'], $eventId);
-    if ($updated !== null) {
-        syncLegacyEventObject($pdo, $updated);
-    }
     Response::json(['event' => eventPayload($updated)]);
 });
 
@@ -653,18 +872,7 @@ $router->delete('/events/{id}', static function (array $params) use ($config, $a
         return;
     }
 
-    $stmt = $pdo->prepare(
-        "UPDATE time_events
-         SET status = 'deleted', updated_at = :updated_at
-         WHERE id = :id AND identity_user_id = :identity_user_id"
-    );
-    $stmt->execute([
-        ':updated_at' => now(),
-        ':id' => $eventId,
-        ':identity_user_id' => $identity['id'],
-    ]);
-    $event['status'] = 'deleted';
-    syncLegacyEventObject($pdo, $event);
+    deleteEvent($pdo, $identity['id'], $eventId, $event);
 
     Response::json(['status' => 'deleted']);
 });
@@ -1251,6 +1459,40 @@ function formOld(array $input, array $keys): array
 }
 
 /**
+ * @param array<string, mixed> $calendar
+ * @return array<string, string>
+ */
+function calendarFormOld(array $calendar): array
+{
+    return [
+        'name' => (string) ($calendar['name'] ?? ''),
+        'description' => (string) ($calendar['description'] ?? ''),
+        'color' => (string) ($calendar['color'] ?? ''),
+        'timezone' => (string) ($calendar['timezone'] ?? ''),
+        'status' => (string) ($calendar['status'] ?? 'active'),
+    ];
+}
+
+/**
+ * @param array<string, mixed> $event
+ * @return array<string, string>
+ */
+function eventFormOld(array $event): array
+{
+    return [
+        'calendar_id' => (string) ($event['calendar_id'] ?? ''),
+        'title' => (string) ($event['title'] ?? ''),
+        'starts_at' => htmlDateTimeLocal($event['starts_at'] ?? null),
+        'ends_at' => htmlDateTimeLocal($event['ends_at'] ?? null),
+        'location' => (string) ($event['location'] ?? ''),
+        'description' => (string) ($event['description'] ?? ''),
+        'timezone' => (string) ($event['timezone'] ?? ''),
+        'status' => (string) ($event['status'] ?? 'active'),
+        'all_day' => truthy($event['all_day'] ?? false) ? '1' : '',
+    ];
+}
+
+/**
  * @param array{id: string, email: string, display_name: string|null} $identity
  * @param array<string, mixed> $data
  */
@@ -1270,9 +1512,52 @@ function redirect(string $path): void
     header('Location: ' . $path);
 }
 
+function plannerView(mixed $value): string
+{
+    $view = is_string($value) ? strtolower(trim($value)) : '';
+    return in_array($view, ['day', 'week', 'month', 'agenda', 'tasks'], true) ? $view : 'week';
+}
+
+function plannerAnchorDate(mixed $value): string
+{
+    if (is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1) {
+        try {
+            return (new DateTimeImmutable($value))->format('Y-m-d');
+        } catch (Throwable) {
+        }
+    }
+
+    return (new DateTimeImmutable('today'))->format('Y-m-d');
+}
+
+function plannerTimezone(mixed $value): string
+{
+    if (is_string($value) && $value !== '') {
+        try {
+            return (new DateTimeZone($value))->getName();
+        } catch (Throwable) {
+        }
+    }
+
+    return date_default_timezone_get() ?: 'UTC';
+}
+
 function html(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function htmlDateTimeLocal(mixed $value): string
+{
+    if (!is_string($value) || trim($value) === '') {
+        return '';
+    }
+
+    try {
+        return (new DateTimeImmutable($value))->format('Y-m-d\TH:i');
+    } catch (Throwable) {
+        return '';
+    }
 }
 
 function allowRuntimeOrigin(): void
@@ -1458,18 +1743,21 @@ function listCalendars(PDO $pdo, string $identityUserId): array
  */
 function listEvents(PDO $pdo, string $identityUserId, ?int $calendarId): array
 {
-    $sql = "SELECT id, calendar_id, title, description, location, starts_at, ends_at, timezone, all_day, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
-            FROM time_events
-            WHERE identity_user_id = :identity_user_id
-              AND status <> 'deleted'";
+    $sql = "SELECT e.id, e.calendar_id, e.title, e.description, e.location, e.starts_at, e.ends_at, e.timezone, e.all_day, e.status,
+                   e.source_service, e.source_object_type, e.source_object_id, e.source_url, e.created_at, e.updated_at,
+                   c.name AS calendar_name, c.color AS calendar_color
+            FROM time_events e
+            LEFT JOIN time_calendars c ON c.id = e.calendar_id AND c.identity_user_id = e.identity_user_id
+            WHERE e.identity_user_id = :identity_user_id
+              AND e.status <> 'deleted'";
     $params = [':identity_user_id' => $identityUserId];
 
     if ($calendarId !== null) {
-        $sql .= ' AND calendar_id = :calendar_id';
+        $sql .= ' AND e.calendar_id = :calendar_id';
         $params[':calendar_id'] = $calendarId;
     }
 
-    $sql .= ' ORDER BY starts_at, id';
+    $sql .= ' ORDER BY e.starts_at, e.id';
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
 
@@ -1524,7 +1812,7 @@ function findCalendar(PDO $pdo, string $identityUserId, ?int $id): ?array
     }
 
     $stmt = $pdo->prepare(
-        "SELECT id, name, color, timezone, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
+        "SELECT id, uri, name, description, color, timezone, components, status, source_service, source_object_type, source_object_id, source_url, created_at, updated_at
          FROM time_calendars
          WHERE id = :id AND identity_user_id = :identity_user_id AND status <> 'deleted'
          LIMIT 1"
@@ -1536,6 +1824,21 @@ function findCalendar(PDO $pdo, string $identityUserId, ?int $id): ?array
 
     $calendar = $stmt->fetch();
     return is_array($calendar) ? $calendar : null;
+}
+
+/**
+ * @param array<int, array<string, mixed>> $events
+ * @return array<int, array<string, mixed>>
+ */
+function upcomingEvents(array $events, int $limit): array
+{
+    $now = time();
+    $upcoming = array_values(array_filter($events, static function (array $event) use ($now): bool {
+        $timestamp = strtotime((string) ($event['starts_at'] ?? ''));
+        return $timestamp !== false && $timestamp >= $now;
+    }));
+
+    return array_slice($upcoming, 0, $limit);
 }
 
 /**
@@ -1560,6 +1863,101 @@ function findEvent(PDO $pdo, string $identityUserId, ?int $id): ?array
 
     $event = $stmt->fetch();
     return is_array($event) ? $event : null;
+}
+
+/**
+ * @param array{name:string,description:mixed,color:mixed,timezone:mixed,status:string} $fields
+ */
+function updateCalendar(PDO $pdo, string $identityUserId, int $calendarId, array $fields): void
+{
+    $stmt = $pdo->prepare(
+        "UPDATE time_calendars
+         SET name = :name, description = :description, color = :color, timezone = :timezone, status = :status, updated_at = :updated_at
+         WHERE id = :id AND identity_user_id = :identity_user_id"
+    );
+    $stmt->execute([
+        ':name' => $fields['name'],
+        ':description' => $fields['description'],
+        ':color' => $fields['color'],
+        ':timezone' => $fields['timezone'],
+        ':status' => $fields['status'],
+        ':updated_at' => now(),
+        ':id' => $calendarId,
+        ':identity_user_id' => $identityUserId,
+    ]);
+}
+
+function deleteCalendar(PDO $pdo, string $identityUserId, int $calendarId): void
+{
+    $stmt = $pdo->prepare(
+        "UPDATE time_calendars
+         SET status = 'deleted', updated_at = :updated_at
+         WHERE id = :id AND identity_user_id = :identity_user_id"
+    );
+    $stmt->execute([
+        ':updated_at' => now(),
+        ':id' => $calendarId,
+        ':identity_user_id' => $identityUserId,
+    ]);
+}
+
+/**
+ * @param array{calendar_id:int,title:string,description:mixed,location:mixed,starts_at:string,ends_at:string,timezone:mixed,all_day:int,status:string} $fields
+ */
+function updateEvent(PDO $pdo, string $identityUserId, int $eventId, array $fields): void
+{
+    $stmt = $pdo->prepare(
+        "UPDATE time_events
+         SET calendar_id = :calendar_id,
+             title = :title,
+             description = :description,
+             location = :location,
+             starts_at = :starts_at,
+             ends_at = :ends_at,
+             timezone = :timezone,
+             all_day = :all_day,
+             status = :status,
+             updated_at = :updated_at
+         WHERE id = :id AND identity_user_id = :identity_user_id"
+    );
+    $stmt->execute([
+        ':calendar_id' => $fields['calendar_id'],
+        ':title' => $fields['title'],
+        ':description' => $fields['description'],
+        ':location' => $fields['location'],
+        ':starts_at' => $fields['starts_at'],
+        ':ends_at' => $fields['ends_at'],
+        ':timezone' => $fields['timezone'],
+        ':all_day' => $fields['all_day'],
+        ':status' => $fields['status'],
+        ':updated_at' => now(),
+        ':id' => $eventId,
+        ':identity_user_id' => $identityUserId,
+    ]);
+
+    $updated = findEvent($pdo, $identityUserId, $eventId);
+    if ($updated !== null) {
+        syncLegacyEventObject($pdo, $updated);
+    }
+}
+
+/**
+ * @param array<string, mixed> $event
+ */
+function deleteEvent(PDO $pdo, string $identityUserId, int $eventId, array $event): void
+{
+    $stmt = $pdo->prepare(
+        "UPDATE time_events
+         SET status = 'deleted', updated_at = :updated_at
+         WHERE id = :id AND identity_user_id = :identity_user_id"
+    );
+    $stmt->execute([
+        ':updated_at' => now(),
+        ':id' => $eventId,
+        ':identity_user_id' => $identityUserId,
+    ]);
+    $event['status'] = 'deleted';
+    syncLegacyEventObject($pdo, $event);
 }
 
 /**
