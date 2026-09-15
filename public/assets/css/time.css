@@ -63,7 +63,7 @@ a {
 }
 
 .time-main {
-    width: min(1060px, calc(100vw - 32px));
+    width: calc(100vw - 32px);
     margin: 0 auto;
     padding: 28px 0 48px;
 }
@@ -630,6 +630,10 @@ textarea {
 }
 
 @media (max-width: 720px) {
+    .time-main {
+        width: calc(100vw - 20px);
+    }
+
     .time-topbar,
     .time-header {
         align-items: stretch;
