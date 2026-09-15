@@ -127,7 +127,10 @@ $renderTask = static function (array $task) use ($timezoneObject): void {
             <h3><?= html((string) ($task['title'] ?? 'Task')) ?></h3>
             <p class="time-meta"><?= html((string) ($task['calendar_name'] ?? 'Calendar')) ?> / <?= html($dueLabel) ?></p>
         </div>
-        <span class="time-task-state"><?= $completedAt === '' ? 'Open' : 'Completed' ?></span>
+        <div class="time-task-actions">
+            <span class="time-task-state"><?= $completedAt === '' ? 'Open' : 'Completed' ?></span>
+            <a class="button button-secondary" href="/tasks/<?= (int) ($task['id'] ?? 0) ?>/edit">Edit</a>
+        </div>
     </article>
     <?php
 };

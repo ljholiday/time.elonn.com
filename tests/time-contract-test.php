@@ -36,6 +36,13 @@ $checks = [
         && str_contains($public, "\$router->post('/events/{id}/delete'")
         && is_file($root . '/templates/calendars/edit.php')
         && is_file($root . '/templates/events/edit.php'),
+    'HTML tasks use canonical VTODO calendar objects' => str_contains($public, "\$router->get('/tasks'")
+        && str_contains($public, "\$router->post('/tasks/{id}/complete'")
+        && str_contains($public, "taskFieldsFromInput")
+        && str_contains($public, "'component_type' => 'VTODO'")
+        && is_file($root . '/templates/tasks/index.php')
+        && is_file($root . '/templates/tasks/new.php')
+        && is_file($root . '/templates/tasks/edit.php'),
     'object source route is runtime-neutral' => str_contains($public, "'objects' => \$objects")
         && !str_contains($public, "'{$runtimePanelRoute}'")
         && !str_contains($public, $worldPanelRoute)

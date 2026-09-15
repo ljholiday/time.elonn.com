@@ -218,11 +218,13 @@ $router->get('/', static function () use ($config, $apiBaseUrl): void {
 
     $pdo = timePdo($config);
     $events = listEvents($pdo, $identity['id'], null);
+    $taskWorkspace = (new CalendarStore($pdo))->workspace($identity['id'], 'tasks', (new DateTimeImmutable('today'))->format('Y-m-d'), plannerTimezone(null));
     renderApp('Dashboard', 'home.php', $identity, [
         'calendars' => listCalendars($pdo, $identity['id']),
         'events' => $events,
         'upcoming_events' => upcomingEvents($events, 5),
         'upcoming_event_count' => count(upcomingEvents($events, PHP_INT_MAX)),
+        'tasks' => is_array($taskWorkspace['tasks'] ?? null) ? $taskWorkspace['tasks'] : [],
     ]);
 });
 
@@ -245,6 +247,209 @@ $router->get('/planner', static function () use ($config, $apiBaseUrl): void {
     }
 
     Response::json(['workspace' => $workspace]);
+});
+
+$router->get('/tasks', static function () use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $workspace = (new CalendarStore(timePdo($config)))->workspace(
+        $identity['id'],
+        'tasks',
+        plannerAnchorDate($_GET['date'] ?? null),
+        plannerTimezone($_GET['timezone'] ?? null)
+    );
+
+    if (isBrowserRequest()) {
+        renderApp('Tasks', 'tasks/index.php', $identity, [
+            'workspace' => $workspace,
+        ]);
+        return;
+    }
+
+    Response::json(['tasks' => $workspace['tasks'] ?? []]);
+});
+
+$router->get('/tasks/new', static function () use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    renderApp('New task', 'tasks/new.php', $identity, [
+        'error' => null,
+        'old' => [],
+        'calendars' => (new CalendarStore(timePdo($config)))->calendars($identity['id']),
+    ]);
+});
+
+$router->post('/tasks', static function () use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $store = new CalendarStore(timePdo($config));
+    $input = requestInput();
+    $fields = taskFieldsFromInput($input);
+    $calendars = $store->calendars($identity['id']);
+    $error = taskValidationError($fields, $calendars);
+
+    if ($error !== null) {
+        if (isBrowserRequest()) {
+            renderApp('New task', 'tasks/new.php', $identity, [
+                'error' => $error,
+                'old' => formOld($input, ['calendar_id', 'title', 'due_at', 'description', 'location', 'timezone', 'priority', 'status', 'all_day']),
+                'calendars' => $calendars,
+            ], 400);
+            return;
+        }
+
+        Response::json(['error' => $error], 400);
+        return;
+    }
+
+    try {
+        $task = $store->create($identity['id'], $fields);
+    } catch (Throwable $throwable) {
+        if (isBrowserRequest()) {
+            renderApp('New task', 'tasks/new.php', $identity, [
+                'error' => $throwable->getMessage(),
+                'old' => formOld($input, ['calendar_id', 'title', 'due_at', 'description', 'location', 'timezone', 'priority', 'status', 'all_day']),
+                'calendars' => $calendars,
+            ], 400);
+            return;
+        }
+
+        Response::json(['error' => $throwable->getMessage()], 400);
+        return;
+    }
+
+    if (isBrowserRequest()) {
+        redirect('/tasks');
+        return;
+    }
+
+    Response::json(['task' => $task], 201);
+});
+
+$router->get('/tasks/{id}/edit', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $store = new CalendarStore(timePdo($config));
+    $task = $store->find($identity['id'], positiveInt($params['id'] ?? null) ?? 0);
+    if ($task === null || ($task['component_type'] ?? '') !== 'VTODO') {
+        renderApp('Task not found', 'tasks/edit.php', $identity, [
+            'error' => 'Task not found.',
+            'task' => null,
+            'old' => [],
+            'calendars' => $store->calendars($identity['id']),
+        ], 404);
+        return;
+    }
+
+    renderApp('Edit task', 'tasks/edit.php', $identity, [
+        'error' => null,
+        'task' => $task,
+        'old' => taskFormOld($task),
+        'calendars' => $store->calendars($identity['id']),
+    ]);
+});
+
+$router->post('/tasks/{id}/edit', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $store = new CalendarStore(timePdo($config));
+    $taskId = positiveInt($params['id'] ?? null) ?? 0;
+    $task = $store->find($identity['id'], $taskId);
+    $calendars = $store->calendars($identity['id']);
+    if ($task === null || ($task['component_type'] ?? '') !== 'VTODO') {
+        renderApp('Task not found', 'tasks/edit.php', $identity, [
+            'error' => 'Task not found.',
+            'task' => null,
+            'old' => [],
+            'calendars' => $calendars,
+        ], 404);
+        return;
+    }
+
+    $input = requestInput();
+    $fields = taskFieldsFromInput($input, $task);
+    $error = taskValidationError($fields, $calendars);
+    $old = formOld($input, ['calendar_id', 'title', 'due_at', 'description', 'location', 'timezone', 'priority', 'status', 'all_day']);
+
+    if ($error !== null) {
+        renderApp('Edit task', 'tasks/edit.php', $identity, [
+            'error' => $error,
+            'task' => $task,
+            'old' => $old,
+            'calendars' => $calendars,
+        ], 400);
+        return;
+    }
+
+    try {
+        $store->update($identity['id'], $taskId, $fields);
+    } catch (Throwable $throwable) {
+        renderApp('Edit task', 'tasks/edit.php', $identity, [
+            'error' => $throwable->getMessage(),
+            'task' => $task,
+            'old' => $old,
+            'calendars' => $calendars,
+        ], 400);
+        return;
+    }
+
+    redirect('/tasks');
+});
+
+$router->post('/tasks/{id}/complete', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $store = new CalendarStore(timePdo($config));
+    $taskId = positiveInt($params['id'] ?? null) ?? 0;
+    $task = $store->find($identity['id'], $taskId);
+    if ($task === null || ($task['component_type'] ?? '') !== 'VTODO') {
+        Response::json(['error' => 'Task not found.'], 404);
+        return;
+    }
+
+    $completed = ($task['completed_at'] ?? null) !== null || ($task['status'] ?? '') === 'completed';
+    $store->update($identity['id'], $taskId, [
+        'status' => $completed ? 'needs-action' : 'completed',
+        'completed_at' => $completed ? null : now(),
+    ]);
+
+    redirect('/tasks');
+});
+
+$router->post('/tasks/{id}/delete', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $store = new CalendarStore(timePdo($config));
+    $taskId = positiveInt($params['id'] ?? null) ?? 0;
+    $task = $store->find($identity['id'], $taskId);
+    if ($task === null || ($task['component_type'] ?? '') !== 'VTODO') {
+        Response::json(['error' => 'Task not found.'], 404);
+        return;
+    }
+
+    $store->delete($identity['id'], $taskId);
+    redirect('/tasks');
 });
 
 $router->post('/runtime/calendars', static function () use ($config, $apiBaseUrl): void {
@@ -1490,6 +1695,91 @@ function eventFormOld(array $event): array
         'status' => (string) ($event['status'] ?? 'active'),
         'all_day' => truthy($event['all_day'] ?? false) ? '1' : '',
     ];
+}
+
+/**
+ * @param array<string, mixed> $task
+ * @return array<string, string>
+ */
+function taskFormOld(array $task): array
+{
+    return [
+        'calendar_id' => (string) ($task['calendar_id'] ?? ''),
+        'title' => (string) ($task['title'] ?? ''),
+        'due_at' => htmlDateTimeLocal($task['due_at'] ?? null),
+        'description' => (string) ($task['description'] ?? ''),
+        'location' => (string) ($task['location'] ?? ''),
+        'timezone' => (string) ($task['timezone'] ?? ''),
+        'priority' => (string) ($task['priority'] ?? ''),
+        'status' => (string) ($task['status'] ?? 'needs-action'),
+        'all_day' => truthy($task['all_day'] ?? false) ? '1' : '',
+    ];
+}
+
+/**
+ * @param array<string, mixed> $input
+ * @param array<string, mixed>|null $existing
+ * @return array<string, mixed>
+ */
+function taskFieldsFromInput(array $input, ?array $existing = null): array
+{
+    $status = cleanString($input['status'] ?? null) ?? (string) ($existing['status'] ?? 'needs-action');
+    $completedAt = $status === 'completed'
+        ? (($existing['completed_at'] ?? null) ?: now())
+        : null;
+
+    return [
+        'calendar_id' => positiveInt($input['calendar_id'] ?? null) ?? (int) ($existing['calendar_id'] ?? 0),
+        'component_type' => 'VTODO',
+        'title' => cleanString($input['title'] ?? null) ?? '',
+        'description' => cleanOptionalString($input['description'] ?? null),
+        'location' => cleanOptionalString($input['location'] ?? null),
+        'due_at' => normalizeDateTime($input['due_at'] ?? null),
+        'completed_at' => $completedAt,
+        'timezone' => cleanOptionalString($input['timezone'] ?? null),
+        'all_day' => truthy($input['all_day'] ?? false) ? 1 : 0,
+        'status' => $status,
+        'priority' => taskPriority($input['priority'] ?? null),
+    ];
+}
+
+/**
+ * @param array<string, mixed> $fields
+ * @param array<int, array<string, mixed>> $calendars
+ */
+function taskValidationError(array $fields, array $calendars): ?string
+{
+    $calendarIds = array_map(static fn (array $calendar): int => (int) $calendar['id'], $calendars);
+    if (!in_array((int) ($fields['calendar_id'] ?? 0), $calendarIds, true)) {
+        return 'Valid calendar is required.';
+    }
+
+    if (trim((string) ($fields['title'] ?? '')) === '') {
+        return 'Task title is required.';
+    }
+
+    if (!in_array((string) ($fields['status'] ?? ''), ['needs-action', 'in-process', 'completed', 'cancelled'], true)) {
+        return 'Task status must be open, in progress, completed, or cancelled.';
+    }
+
+    return null;
+}
+
+function taskPriority(mixed $value): ?int
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+
+    if (is_string($value) && ctype_digit($value)) {
+        return max(0, min(9, (int) $value));
+    }
+
+    if (is_int($value)) {
+        return max(0, min(9, $value));
+    }
+
+    return null;
 }
 
 /**

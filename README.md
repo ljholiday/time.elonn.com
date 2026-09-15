@@ -24,6 +24,13 @@ The PHP DOM extension must be enabled for the active cPanel PHP version.
 - `GET /ready`
 - `GET /`
 - `GET /planner`
+- `GET /tasks`
+- `GET /tasks/new`
+- `POST /tasks`
+- `GET /tasks/{id}/edit`
+- `POST /tasks/{id}/edit`
+- `POST /tasks/{id}/complete`
+- `POST /tasks/{id}/delete`
 - `GET /calendars`
 - `POST /calendars`
 - `GET /calendars/{id}/edit`

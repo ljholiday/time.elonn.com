@@ -140,7 +140,7 @@ h1 {
 
 .time-stats {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
     margin-bottom: 18px;
 }
@@ -505,6 +505,30 @@ h1 {
     padding: 14px;
 }
 
+.time-task-row-completed h3 {
+    color: #637571;
+    text-decoration: line-through;
+}
+
+.time-task-actions {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.time-task-actions form {
+    margin: 0;
+}
+
+.time-task-actions .button {
+    min-height: 32px;
+    padding: 5px 10px;
+    font-size: 0.84rem;
+}
+
 .time-task-state {
     flex: 0 0 auto;
     color: #5b3f89;
@@ -683,5 +707,9 @@ textarea {
     .time-task-row {
         align-items: flex-start;
         flex-direction: column;
+    }
+
+    .time-task-actions {
+        justify-content: flex-start;
     }
 }

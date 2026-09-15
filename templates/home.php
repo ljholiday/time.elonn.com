@@ -3,6 +3,8 @@
 $calendarCount = count($data['calendars'] ?? []);
 $eventCount = count($data['events'] ?? []);
 $upcomingEvents = is_array($data['upcoming_events'] ?? null) ? $data['upcoming_events'] : [];
+$tasks = is_array($data['tasks'] ?? null) ? $data['tasks'] : [];
+$openTaskCount = count(array_filter($tasks, static fn (array $task): bool => ($task['completed_at'] ?? null) === null && ($task['status'] ?? '') !== 'completed'));
 $upcomingEventCount = (int) ($data['upcoming_event_count'] ?? count($upcomingEvents));
 $nextEvent = $upcomingEvents[0] ?? null;
 $formatDate = static function (?string $value): string {
@@ -31,6 +33,7 @@ $formatTime = static function (?string $value): string {
     <div class="time-actions">
         <a class="button" href="/calendars/new">Create calendar</a>
         <a class="button button-secondary" href="/events/new">Create event</a>
+        <a class="button button-secondary" href="/tasks/new">Create task</a>
     </div>
 </section>
 
@@ -46,6 +49,10 @@ $formatTime = static function (?string $value): string {
     <article class="time-stat">
         <h2><?= $upcomingEventCount ?></h2>
         <p class="time-meta">Upcoming</p>
+    </article>
+    <article class="time-stat">
+        <h2><?= (int) $openTaskCount ?></h2>
+        <p class="time-meta">Open tasks</p>
     </article>
 </section>
 
