@@ -22,7 +22,7 @@ $sourceService = (string) ($calendar['source_service'] ?? '');
             <p class="time-error"><?= html($error) ?></p>
         <?php endif; ?>
         <?php if ($sourceService !== ''): ?>
-            <p class="time-notice">This calendar mirrors <?= html($sourceService) ?>. It can be renamed locally, but deletion is disabled.</p>
+            <p class="time-notice">This calendar mirrors <?= html($sourceService) ?>. It can be renamed locally, but its status stays active and deletion is disabled.</p>
         <?php endif; ?>
         <label>
             Name
@@ -40,16 +40,18 @@ $sourceService = (string) ($calendar['source_service'] ?? '');
             Timezone
             <input name="timezone" list="timezones" placeholder="America/Los_Angeles" value="<?= html((string) ($old['timezone'] ?? '')) ?>">
         </label>
-        <label>
-            Status
-            <select name="status">
-                <?php foreach (['active' => 'Active', 'archived' => 'Archived'] as $value => $label): ?>
-                    <option value="<?= html($value) ?>" <?= (string) ($old['status'] ?? 'active') === $value ? 'selected' : '' ?>>
-                        <?= html($label) ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-        </label>
+        <?php if ($sourceService === ''): ?>
+            <label>
+                Status
+                <select name="status">
+                    <?php foreach (['active' => 'Active', 'archived' => 'Archived'] as $value => $label): ?>
+                        <option value="<?= html($value) ?>" <?= (string) ($old['status'] ?? 'active') === $value ? 'selected' : '' ?>>
+                            <?= html($label) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </label>
+        <?php endif; ?>
         <datalist id="timezones">
             <option value="America/Los_Angeles"></option>
             <option value="America/Denver"></option>

@@ -81,17 +81,16 @@ $calendarStyle = static function (array $event): string {
     $color = trim((string) ($event['calendar_color'] ?? ''));
     return preg_match('/^#[0-9a-fA-F]{6}$/', $color) === 1 ? ' style="border-left-color: ' . html($color) . '"' : '';
 };
-$legacyEventEditUrl = static function (array $event): ?string {
-    $uri = (string) ($event['uri'] ?? '');
-    if (preg_match('/^event-(\\d+)\\.ics$/', $uri, $matches) !== 1) {
+$appointmentEditUrl = static function (array $event): ?string {
+    if (is_array($event['source'] ?? null)) {
         return null;
     }
 
-    return '/events/' . $matches[1] . '/edit';
+    return '/appointments/' . (int) ($event['id'] ?? 0) . '/edit';
 };
-$renderAppointment = static function (array $event) use ($formatEventTime, $calendarStyle, $legacyEventEditUrl): void {
+$renderAppointment = static function (array $event) use ($formatEventTime, $calendarStyle, $appointmentEditUrl): void {
     $source = is_array($event['source'] ?? null) ? $event['source'] : null;
-    $editUrl = $legacyEventEditUrl($event);
+    $editUrl = $appointmentEditUrl($event);
     ?>
     <article class="time-appointment"<?= $calendarStyle($event) ?>>
         <p class="time-appointment-time"><?= html($formatEventTime($event)) ?></p>

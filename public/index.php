@@ -671,6 +671,127 @@ $router->post('/tasks/{id}/delete', static function (array $params) use ($config
     redirect('/tasks');
 });
 
+$router->get('/appointments/{id}/edit', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $store = new CalendarStore(timePdo($config));
+    $appointment = $store->find($identity['id'], positiveInt($params['id'] ?? null) ?? 0);
+    if ($appointment === null || ($appointment['component_type'] ?? '') !== 'VEVENT') {
+        renderApp('Event not found', 'appointments/edit.php', $identity, [
+            'error' => 'Event not found.',
+            'appointment' => null,
+            'old' => [],
+            'calendars' => $store->calendars($identity['id']),
+        ], 404);
+        return;
+    }
+    if (is_array($appointment['source'] ?? null)) {
+        renderApp('Edit event', 'appointments/edit.php', $identity, [
+            'error' => 'This event mirrors ' . (string) ($appointment['source']['service'] ?? 'another service') . ' and is read-only in Time.',
+            'appointment' => $appointment,
+            'old' => appointmentFormOld($appointment),
+            'calendars' => $store->calendars($identity['id']),
+        ], 409);
+        return;
+    }
+
+    renderApp('Edit event', 'appointments/edit.php', $identity, [
+        'error' => null,
+        'appointment' => $appointment,
+        'old' => appointmentFormOld($appointment),
+        'calendars' => $store->calendars($identity['id']),
+    ]);
+});
+
+$router->post('/appointments/{id}/edit', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $store = new CalendarStore(timePdo($config));
+    $appointmentId = positiveInt($params['id'] ?? null) ?? 0;
+    $appointment = $store->find($identity['id'], $appointmentId);
+    $calendars = $store->calendars($identity['id']);
+    if ($appointment === null || ($appointment['component_type'] ?? '') !== 'VEVENT') {
+        renderApp('Event not found', 'appointments/edit.php', $identity, [
+            'error' => 'Event not found.',
+            'appointment' => null,
+            'old' => [],
+            'calendars' => $calendars,
+        ], 404);
+        return;
+    }
+    if (is_array($appointment['source'] ?? null)) {
+        renderApp('Edit event', 'appointments/edit.php', $identity, [
+            'error' => 'This event mirrors ' . (string) ($appointment['source']['service'] ?? 'another service') . ' and is read-only in Time.',
+            'appointment' => $appointment,
+            'old' => appointmentFormOld($appointment),
+            'calendars' => $calendars,
+        ], 409);
+        return;
+    }
+
+    $input = requestInput();
+    $fields = appointmentFieldsFromInput($input, $appointment);
+    $error = appointmentValidationError($fields, $calendars);
+    $old = formOld($input, ['calendar_id', 'title', 'starts_at', 'ends_at', 'location', 'description', 'timezone', 'status', 'all_day']);
+
+    if ($error !== null) {
+        renderApp('Edit event', 'appointments/edit.php', $identity, [
+            'error' => $error,
+            'appointment' => $appointment,
+            'old' => $old,
+            'calendars' => $calendars,
+        ], 400);
+        return;
+    }
+
+    try {
+        $store->update($identity['id'], $appointmentId, $fields);
+    } catch (Throwable $throwable) {
+        renderApp('Edit event', 'appointments/edit.php', $identity, [
+            'error' => $throwable->getMessage(),
+            'appointment' => $appointment,
+            'old' => $old,
+            'calendars' => $calendars,
+        ], 400);
+        return;
+    }
+
+    redirect('/planner');
+});
+
+$router->post('/appointments/{id}/delete', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $store = new CalendarStore(timePdo($config));
+    $appointmentId = positiveInt($params['id'] ?? null) ?? 0;
+    $appointment = $store->find($identity['id'], $appointmentId);
+    if ($appointment === null || ($appointment['component_type'] ?? '') !== 'VEVENT') {
+        Response::json(['error' => 'Event not found.'], 404);
+        return;
+    }
+    if (is_array($appointment['source'] ?? null)) {
+        renderApp('Edit event', 'appointments/edit.php', $identity, [
+            'error' => 'This event mirrors ' . (string) ($appointment['source']['service'] ?? 'another service') . ' and cannot be deleted from Time.',
+            'appointment' => $appointment,
+            'old' => appointmentFormOld($appointment),
+            'calendars' => $store->calendars($identity['id']),
+        ], 409);
+        return;
+    }
+
+    $store->delete($identity['id'], $appointmentId);
+    redirect('/planner');
+});
+
 $router->post('/runtime/calendars', static function () use ($config, $apiBaseUrl): void {
     allowRuntimeOrigin();
 
@@ -841,7 +962,9 @@ $router->post('/calendars/{id}/edit', static function (array $params) use ($conf
 
     $input = requestInput();
     $name = cleanString($input['name'] ?? null);
-    $status = cleanString($input['status'] ?? null) ?? (string) $calendar['status'];
+    $status = ($calendar['source_service'] ?? null) === 'social'
+        ? (string) $calendar['status']
+        : cleanString($input['status'] ?? null) ?? (string) $calendar['status'];
     $old = formOld($input, ['name', 'description', 'color', 'timezone', 'status']);
 
     if ($name === null) {
@@ -923,7 +1046,9 @@ $router->patch('/calendars/{id}', static function (array $params) use ($config, 
     $description = array_key_exists('description', $input) ? cleanOptionalString($input['description']) : $calendar['description'];
     $color = array_key_exists('color', $input) ? cleanOptionalString($input['color']) : $calendar['color'];
     $timezone = array_key_exists('timezone', $input) ? cleanOptionalString($input['timezone']) : $calendar['timezone'];
-    $status = array_key_exists('status', $input) ? cleanString($input['status']) : (string) $calendar['status'];
+    $status = ($calendar['source_service'] ?? null) === 'social'
+        ? (string) $calendar['status']
+        : (array_key_exists('status', $input) ? cleanString($input['status']) : (string) $calendar['status']);
     if (!in_array($status, ['active', 'archived'], true)) {
         Response::json(['error' => 'Calendar status must be active or archived.'], 400);
         return;
@@ -2402,6 +2527,87 @@ function taskValidationError(array $fields, array $calendars): ?string
 
     if (!in_array((string) ($fields['status'] ?? ''), ['needs-action', 'in-process', 'completed', 'cancelled'], true)) {
         return 'Task status must be open, in progress, completed, or cancelled.';
+    }
+
+    return null;
+}
+
+/**
+ * @param array<string, mixed> $appointment
+ * @return array<string, string>
+ */
+function appointmentFormOld(array $appointment): array
+{
+    return [
+        'calendar_id' => (string) ($appointment['calendar_id'] ?? ''),
+        'title' => (string) ($appointment['title'] ?? ''),
+        'starts_at' => htmlDateTimeLocal($appointment['starts_at'] ?? null),
+        'ends_at' => htmlDateTimeLocal($appointment['ends_at'] ?? null),
+        'location' => (string) ($appointment['location'] ?? ''),
+        'description' => (string) ($appointment['description'] ?? ''),
+        'timezone' => (string) ($appointment['timezone'] ?? ''),
+        'status' => appointmentDisplayStatus($appointment['status'] ?? null),
+        'all_day' => truthy($appointment['all_day'] ?? false) ? '1' : '',
+    ];
+}
+
+/**
+ * The stored status on a canonical calendar object round-trips through iCalendar's own
+ * STATUS vocabulary (CONFIRMED/TENTATIVE/CANCELLED for VEVENT), not the app's own
+ * active/cancelled wording — normalize back to active/cancelled so the edit form's
+ * dropdown and revalidation agree with what CalendarObject::build() expects on save.
+ */
+function appointmentDisplayStatus(mixed $status): string
+{
+    return in_array(strtolower((string) $status), ['cancelled', 'canceled'], true) ? 'cancelled' : 'active';
+}
+
+/**
+ * @param array<string, mixed> $input
+ * @param array<string, mixed>|null $existing
+ * @return array<string, mixed>
+ */
+function appointmentFieldsFromInput(array $input, ?array $existing = null): array
+{
+    return [
+        'calendar_id' => positiveInt($input['calendar_id'] ?? null) ?? (int) ($existing['calendar_id'] ?? 0),
+        'component_type' => 'VEVENT',
+        'title' => cleanString($input['title'] ?? null) ?? '',
+        'description' => cleanOptionalString($input['description'] ?? null),
+        'location' => cleanOptionalString($input['location'] ?? null),
+        'starts_at' => normalizeDateTime($input['starts_at'] ?? null),
+        'ends_at' => normalizeDateTime($input['ends_at'] ?? null),
+        'timezone' => cleanOptionalString($input['timezone'] ?? null),
+        'all_day' => truthy($input['all_day'] ?? false) ? 1 : 0,
+        'status' => cleanString($input['status'] ?? null) ?? appointmentDisplayStatus($existing['status'] ?? null),
+    ];
+}
+
+/**
+ * @param array<string, mixed> $fields
+ * @param array<int, array<string, mixed>> $calendars
+ */
+function appointmentValidationError(array $fields, array $calendars): ?string
+{
+    $calendarIds = array_map(static fn (array $calendar): int => (int) $calendar['id'], $calendars);
+    if (!in_array((int) ($fields['calendar_id'] ?? 0), $calendarIds, true)) {
+        return 'Valid calendar is required.';
+    }
+
+    if (trim((string) ($fields['title'] ?? '')) === '') {
+        return 'Event title is required.';
+    }
+
+    if ($fields['starts_at'] === null || $fields['ends_at'] === null) {
+        return 'Start and end are required.';
+    }
+
+    if ($fields['ends_at'] <= $fields['starts_at']) {
+        return 'Event end must be after start.';
+    }
+
+    if (!in_array((string) ($fields['status'] ?? ''), ['active', 'cancelled'], true)) {
+        return 'Event status must be active or cancelled.';
     }
 
     return null;
