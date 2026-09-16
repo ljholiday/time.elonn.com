@@ -25,8 +25,10 @@ $status = (string) ($calendar['status'] ?? 'active');
         <?php if ($sourceService !== ''): ?>
             <p class="time-notice">This calendar mirrors <?= html($sourceService) ?>. It can be renamed locally, but deletion is disabled.</p>
         <?php endif; ?>
-        <?php if ($status === 'archived'): ?>
+        <?php if ($status === 'archived' && $sourceService === ''): ?>
             <p class="time-notice">This calendar is archived. It's hidden from the Planner, Dashboard, and CalDAV sync until you unarchive it.</p>
+        <?php elseif ($status === 'archived'): ?>
+            <p class="time-notice">This calendar is hidden. <?= html(ucfirst($sourceService)) ?> keeps sending events in the background, but they won't show in your Planner, Dashboard, or CalDAV until you show it again.</p>
         <?php endif; ?>
         <label>
             Name
@@ -58,7 +60,17 @@ $status = (string) ($calendar['status'] ?? 'active');
     </form>
 
     <div class="time-form-actions">
-        <?php if ($status === 'archived'): ?>
+        <?php if ($sourceService !== ''): ?>
+            <?php if ($status === 'archived'): ?>
+                <form method="post" action="/calendars/<?= (int) $calendar['id'] ?>/unarchive">
+                    <button class="button button-secondary" type="submit">Show in Planner</button>
+                </form>
+            <?php else: ?>
+                <form method="post" action="/calendars/<?= (int) $calendar['id'] ?>/archive">
+                    <button class="button button-secondary" type="submit">Hide from Planner</button>
+                </form>
+            <?php endif; ?>
+        <?php elseif ($status === 'archived'): ?>
             <form method="post" action="/calendars/<?= (int) $calendar['id'] ?>/unarchive">
                 <button class="button button-secondary" type="submit">Unarchive calendar</button>
             </form>

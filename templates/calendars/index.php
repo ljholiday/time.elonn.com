@@ -39,7 +39,17 @@ $renderCalendarCard = static function (array $calendar): void {
         </dl>
         <div class="time-card-actions">
             <a class="button button-secondary" href="/calendars/<?= (int) $calendar['id'] ?>/edit">Edit</a>
-            <?php if ($archived): ?>
+            <?php if ($source !== null): ?>
+                <?php if ($archived): ?>
+                    <form method="post" action="/calendars/<?= (int) $calendar['id'] ?>/unarchive">
+                        <button class="button button-secondary" type="submit">Show in Planner</button>
+                    </form>
+                <?php else: ?>
+                    <form method="post" action="/calendars/<?= (int) $calendar['id'] ?>/archive">
+                        <button class="button button-secondary" type="submit">Hide from Planner</button>
+                    </form>
+                <?php endif; ?>
+            <?php elseif ($archived): ?>
                 <form method="post" action="/calendars/<?= (int) $calendar['id'] ?>/unarchive">
                     <button class="button button-secondary" type="submit">Unarchive</button>
                 </form>
@@ -74,9 +84,9 @@ $renderCalendarCard = static function (array $calendar): void {
     <?php if ($archivedCalendars !== []): ?>
         <section class="time-header">
             <div>
-                <p class="time-kicker">Archived</p>
-                <h2>Archived calendars</h2>
-                <p class="time-copy">Hidden from the Planner, Dashboard, and CalDAV sync until unarchived.</p>
+                <p class="time-kicker">Not shown</p>
+                <h2>Archived &amp; hidden calendars</h2>
+                <p class="time-copy">Not shown in the Planner, Dashboard, or CalDAV sync. Native calendars here are archived; mirrored calendars are hidden, but their source keeps sending events in the background.</p>
             </div>
         </section>
         <section class="time-grid">
