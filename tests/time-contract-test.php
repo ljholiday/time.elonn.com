@@ -12,6 +12,13 @@ $store = file_get_contents($root . '/src/CalendarStore.php') ?: '';
 $runtimePanelRoute = '/runtime/' . 'panel/time';
 $worldPanelRoute = '/world/' . 'panels/time';
 $descriptor = ServiceDescriptor::payload();
+$contract = json_decode((string) file_get_contents($root . '/public/time.json'), true);
+$contractOperationIds = [];
+foreach (($contract['endpoints'] ?? []) as $endpoint) {
+    foreach (($endpoint['operations'] ?? []) as $operation) {
+        $contractOperationIds[] = (string) ($operation['id'] ?? '');
+    }
+}
 
 $checks = [
     'publishes canonical Time service call route' => str_contains($public, "/time/call")
@@ -47,6 +54,40 @@ $checks = [
         && !str_contains($public, "'{$runtimePanelRoute}'")
         && !str_contains($public, $worldPanelRoute)
         && !str_contains($public, 'runtimePanel('),
+    'Contract declares the full event/task Conductor operation surface' => $contractOperationIds === [
+        'time.search', 'time.list', 'time.open', 'time.calendars', 'time.agenda', 'time.tasks',
+        'time.event.create', 'time.event.update', 'time.event.delete',
+        'time.task.create', 'time.task.update', 'time.task.complete', 'time.task.reopen', 'time.task.delete',
+    ],
+    'Every mutating operation targeting an existing object is object_id/context sourced, never model-guessed' =>
+        (static function (array $contract): bool {
+            $mutatingExisting = ['time.event.update', 'time.event.delete', 'time.task.update', 'time.task.complete', 'time.task.reopen', 'time.task.delete'];
+            foreach (($contract['endpoints'] ?? []) as $endpoint) {
+                foreach (($endpoint['operations'] ?? []) as $operation) {
+                    if (!in_array($operation['id'] ?? '', $mutatingExisting, true)) {
+                        continue;
+                    }
+                    $objectId = $operation['arguments']['object_id'] ?? null;
+                    if (($operation['model_selectable'] ?? true) !== false
+                        || !is_array($objectId)
+                        || ($objectId['source'] ?? '') !== 'context'
+                        || ($objectId['context_key'] ?? '') !== 'object_id') {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        })($contract),
+    'Conductor operation handlers exist in code for every declared mutating operation' => str_contains($public, "'time.event.create'")
+        && str_contains($public, "'time.event.update'")
+        && str_contains($public, "'time.event.delete'")
+        && str_contains($public, "'time.task.create'")
+        && str_contains($public, "'time.task.complete'")
+        && str_contains($public, "'time.task.reopen'")
+        && str_contains($public, "'time.task.delete'")
+        && str_contains($public, 'function timeAgendaObjects(')
+        && str_contains($public, 'function timeTaskObjects(')
+        && str_contains($public, 'resolveCalendarId('),
 ];
 
 $failed = 0;

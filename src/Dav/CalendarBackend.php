@@ -138,11 +138,11 @@ final class CalendarBackend extends AbstractBackend implements SyncSupport
             'INSERT INTO time_calendar_objects
                 (identity_user_id, calendar_id, uri, uid, component_type, calendar_data, etag, size_bytes,
                  title, description, location, starts_at, ends_at, due_at, completed_at, timezone, all_day,
-                 status, priority, recurrence_rule, alarm_trigger, first_occurrence, last_occurrence, created_at)
+                 status, priority, recurrence_rule, alarm_trigger, attendees, first_occurrence, last_occurrence, created_at)
              VALUES
                 (:identity_user_id, :calendar_id, :uri, :uid, :component_type, :calendar_data, :etag, :size_bytes,
                  :title, :description, :location, :starts_at, :ends_at, :due_at, :completed_at, :timezone, :all_day,
-                 :status, :priority, :recurrence_rule, :alarm_trigger, :first_occurrence, :last_occurrence, :created_at)'
+                 :status, :priority, :recurrence_rule, :alarm_trigger, :attendees, :first_occurrence, :last_occurrence, :created_at)'
         );
         $stmt->execute(['identity_user_id' => $this->identityUserId, 'calendar_id' => (int) $calendarId, 'uri' => $objectUri, 'created_at' => $now] + $fields);
         $this->recordChange((int) $calendarId, $objectUri, 'created');

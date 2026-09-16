@@ -49,6 +49,7 @@ final class CalendarObject
         $rrule = isset($component->RRULE) ? trim((string) $component->RRULE) : null;
         $alarms = $component->select('VALARM');
         $alarmTrigger = isset($alarms[0]->TRIGGER) ? trim((string) $alarms[0]->TRIGGER) : null;
+        $attendees = self::parseAttendees($component);
 
         return [
             'uid' => $uid,
@@ -69,6 +70,7 @@ final class CalendarObject
             'priority' => $priority,
             'recurrence_rule' => $rrule,
             'alarm_trigger' => $alarmTrigger,
+            'attendees' => $attendees !== [] ? json_encode($attendees) : null,
             'first_occurrence' => $start ?? $due,
             'last_occurrence' => $end ?? $due ?? $start,
         ];
@@ -146,7 +148,79 @@ final class CalendarObject
             unset($alarm);
         }
 
+        foreach (self::normalizeAttendees($fields['attendees'] ?? null) as $attendee) {
+            $params = [];
+            if (($attendee['name'] ?? '') !== '') {
+                $params['CN'] = $attendee['name'];
+            }
+            $component->add('ATTENDEE', 'mailto:' . $attendee['email'], $params);
+        }
+
         return $calendar->serialize();
+    }
+
+    /**
+     * @return array<int, array{name?: string, email: string}>
+     */
+    private static function parseAttendees(mixed $component): array
+    {
+        $attendees = [];
+        foreach ($component->select('ATTENDEE') as $property) {
+            $value = trim((string) $property);
+            $email = stripos($value, 'mailto:') === 0 ? substr($value, 7) : $value;
+            $email = trim($email);
+            if ($email === '') {
+                continue;
+            }
+            $name = isset($property['CN']) ? trim((string) $property['CN']) : '';
+            $attendees[] = $name !== '' ? ['name' => $name, 'email' => $email] : ['email' => $email];
+        }
+        return $attendees;
+    }
+
+    /**
+     * Accepts an attendees value in any of the shapes callers may reasonably supply it:
+     * a JSON-encoded array (round-tripped from storage), a raw comma-separated string of
+     * "Name <email>" / bare-email entries (as a Contract argument arrives), or an already
+     * structured array of {name?, email} pairs.
+     *
+     * @return array<int, array{name?: string, email: string}>
+     */
+    private static function normalizeAttendees(mixed $value): array
+    {
+        if ($value === null || $value === '') {
+            return [];
+        }
+
+        if (is_string($value)) {
+            $decoded = json_decode($value, true);
+            $value = is_array($decoded) ? $decoded : array_map('trim', explode(',', $value));
+        }
+
+        if (!is_array($value)) {
+            return [];
+        }
+
+        $attendees = [];
+        foreach ($value as $entry) {
+            if (is_array($entry)) {
+                $email = trim((string) ($entry['email'] ?? ''));
+                $name = trim((string) ($entry['name'] ?? ''));
+            } else {
+                $text = trim((string) $entry);
+                $name = '';
+                $email = $text;
+                if (preg_match('/^(.*)<(.+)>$/', $text, $matches)) {
+                    $name = trim($matches[1]);
+                    $email = trim($matches[2]);
+                }
+            }
+            if ($email === '') {
+                continue;
+            }
+            $attendees[] = $name !== '' ? ['name' => $name, 'email' => $email] : ['email' => $email];
+        }
+        return $attendees;
     }
 
     private static function optional(mixed $property): ?string

@@ -17,12 +17,32 @@
     {
       "id": "calendar_object_open",
       "description": "Open a single calendar object already identified by a prior Dataset action."
+    },
+    {
+      "id": "calendar_discovery",
+      "description": "Discover the calendars available to the member."
+    },
+    {
+      "id": "calendar_agenda",
+      "description": "Show calendar events within a requested time range, including recurring events."
+    },
+    {
+      "id": "task_query",
+      "description": "Show the member's tasks, filtered by status or due date, including overdue tasks."
+    },
+    {
+      "id": "calendar_event_management",
+      "description": "Create, update, and delete calendar events."
+    },
+    {
+      "id": "task_management",
+      "description": "Create, update, complete, reopen, and delete tasks."
     }
   ],
   "contract": {
     "json": "https://time.elonn.com/time.json",
     "markdown": "https://time.elonn.com/time.md",
-    "revision": 2
+    "revision": 3
   },
-  "published": "2026-08-22T00:00:00Z"
+  "published": "2026-09-15T00:00:00Z"
 }

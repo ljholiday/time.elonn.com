@@ -11,8 +11,8 @@ object carrying a `source` reference back to the originating Social event.
 
 - Service id: `time.elonn`
 - Domain: `calendar`
-- Revision: `2`
-- Published: `2026-08-27T00:00:00Z`
+- Revision: `3`
+- Published: `2026-09-15T00:00:00Z`
 - Canonical JSON: `https://time.elonn.com/time.json`
 - Service Publication: `https://time.elonn.com/time-publication.json`
 
@@ -30,6 +30,32 @@ before presenting a schema.
 | --- | --- |
 | `field.search_text` | Search |
 | `field.result_limit` | How many to show |
+| `field.title` | Title |
+| `field.description` | Description |
+| `field.location` | Location |
+| `field.starts_at` | Starts |
+| `help.starts_at` | An ISO 8601 date/time, e.g. 2026-09-18T12:00:00-04:00. |
+| `field.ends_at` | Ends |
+| `field.all_day` | All day |
+| `field.timezone` | Time zone |
+| `help.timezone` | An IANA time zone name, e.g. America/New_York. Defaults to the calendar's own time zone, or UTC. |
+| `field.recurrence_rule` | Repeats |
+| `help.recurrence_rule` | An RFC 5545 RRULE value, e.g. FREQ=WEEKLY;BYDAY=FR. Leave blank for a one-time item. |
+| `field.calendar` | Calendar |
+| `help.calendar` | The calendar to use, by name. Defaults to the member's first calendar, creating one if they have none yet. |
+| `field.attendees` | Attendees |
+| `help.attendees` | A comma-separated list of attendees, e.g. Jane Smith <jane@example.com>, bob@example.com. |
+| `field.due_at` | Due |
+| `field.priority` | Priority |
+| `help.priority` | 0-9, where 1 is highest priority and 9 is lowest. Leave blank for no priority. |
+| `field.range_start` | From |
+| `field.range_end` | To |
+| `field.task_status` | Status |
+| `enum.task_status.open` | Open |
+| `enum.task_status.completed` | Completed |
+| `enum.task_status.all` | All |
+| `field.due_before` | Due before |
+| `field.due_after` | Due after |
 
 ## Authentication
 
@@ -89,14 +115,101 @@ Open a single calendar object already identified by a prior Dataset action's `ob
 |---|---|---|
 | `object_id` | yes | context (`object_id`) |
 
+### `time.calendars`
+
+Discover the calendars available to the member. Takes no arguments.
+
+### `time.agenda`
+
+Show calendar events within a requested time range, expanding recurring events that fall within it.
+
+| argument | required | source | default |
+|---|---|---|---|
+| `start` | yes | model | — |
+| `end` | yes | model | — |
+| `timezone` | no | model | `UTC` |
+
+### `time.tasks`
+
+Show the member's tasks, optionally filtered by status and due date.
+
+| argument | required | source | default |
+|---|---|---|---|
+| `status` | no | model (enum: `open`, `completed`, `all`) | `open` |
+| `due_before` | no | model | — |
+| `due_after` | no | model | — |
+
+### `time.event.create`
+
+Create a new calendar event.
+
+| argument | required | source | default |
+|---|---|---|---|
+| `title` | yes | model | — |
+| `starts_at` | yes | model | — |
+| `ends_at` | no | model | `starts_at` + 1 hour |
+| `all_day` | no | model | `false` |
+| `timezone` | no | model | the calendar's time zone, else UTC |
+| `location` | no | model | — |
+| `description` | no | model | — |
+| `recurrence_rule` | no | model | — |
+| `calendar` | no | model | the member's first calendar, created if none exists |
+| `attendees` | no | model | — |
+
+### `time.event.update` — not Model-selectable
+
+Update an existing calendar event already identified by a prior Dataset action's `object_id`. Every
+argument besides `object_id` is optional; only supplied fields change.
+
+| argument | required | source |
+|---|---|---|
+| `object_id` | yes | context (`object_id`) |
+| `title`, `starts_at`, `ends_at`, `all_day`, `timezone`, `location`, `description`, `recurrence_rule`, `calendar`, `attendees` | no | model |
+
+### `time.event.delete` — not Model-selectable
+
+| argument | required | source |
+|---|---|---|
+| `object_id` | yes | context (`object_id`) |
+
+### `time.task.create`
+
+Create a new task.
+
+| argument | required | source |
+|---|---|---|
+| `title` | yes | model |
+| `description`, `due_at`, `starts_at`, `priority`, `recurrence_rule`, `calendar` | no | model |
+
+### `time.task.update` — not Model-selectable
+
+| argument | required | source |
+|---|---|---|
+| `object_id` | yes | context (`object_id`) |
+| `title`, `description`, `due_at`, `starts_at`, `priority`, `recurrence_rule`, `calendar` | no | model |
+
+### `time.task.complete` / `time.task.reopen` — not Model-selectable
+
+| argument | required | source |
+|---|---|---|
+| `object_id` | yes | context (`object_id`) |
+
+### `time.task.delete` — not Model-selectable
+
+| argument | required | source |
+|---|---|---|
+| `object_id` | yes | context (`object_id`) |
+
 ## Response
 
-Time returns one canonical Service `Dataset` containing `time.calendar_event` or `time.task` objects as
-appropriate to the operation.
+Time returns one canonical Service `Dataset` containing `time.calendar_event`, `time.task`, or
+`time.calendar` objects as appropriate to the operation.
 
 ## Side Effects
 
-None of the operations in this Contract create or modify data.
+`time.event.create`, `time.event.update`, `time.event.delete`, `time.task.create`, `time.task.update`,
+`time.task.complete`, `time.task.reopen`, and `time.task.delete` create or modify data. Every other
+operation is read-only.
 
 ## Privacy
 
@@ -111,4 +224,9 @@ Time may return these errors in the response Dataset:
 - `time.member_required`
 - `time.unsupported_operation`
 - `time.invalid_search_call`
+- `time.invalid_event_call`
+- `time.invalid_task_call`
+- `time.calendar_not_found`
+- `time.forbidden_mutation`
+- `time.validation_failed`
 - `time.object_not_found`

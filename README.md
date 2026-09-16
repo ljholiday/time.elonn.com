@@ -22,6 +22,12 @@ The PHP DOM extension must be enabled for the active cPanel PHP version.
 
 - `GET /health`
 - `GET /ready`
+- `GET /descriptor`
+- `GET /metrics`
+- `POST /time/call` — the canonical Conductor Call/Dataset endpoint. See `public/time.md`
+  (or `public/time.json`, the normative machine representation) for the full operation list:
+  `time.search`, `time.list`, `time.open`, `time.calendars`, `time.agenda`, `time.tasks`,
+  `time.event.create`/`update`/`delete`, `time.task.create`/`update`/`complete`/`reopen`/`delete`.
 - `GET /`
 - `GET /planner`
 - `GET /tasks`

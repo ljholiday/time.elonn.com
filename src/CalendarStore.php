@@ -90,11 +90,11 @@ final class CalendarStore
             'INSERT INTO time_calendar_objects
                 (identity_user_id, calendar_id, uri, uid, component_type, calendar_data, etag, size_bytes,
                  title, description, location, starts_at, ends_at, due_at, completed_at, timezone, all_day,
-                 status, priority, recurrence_rule, alarm_trigger, first_occurrence, last_occurrence, created_at)
+                 status, priority, recurrence_rule, alarm_trigger, attendees, first_occurrence, last_occurrence, created_at)
              VALUES
                 (:identity_user_id, :calendar_id, :uri, :uid, :component_type, :calendar_data, :etag, :size_bytes,
                  :title, :description, :location, :starts_at, :ends_at, :due_at, :completed_at, :timezone, :all_day,
-                 :status, :priority, :recurrence_rule, :alarm_trigger, :first_occurrence, :last_occurrence, :created_at)'
+                 :status, :priority, :recurrence_rule, :alarm_trigger, :attendees, :first_occurrence, :last_occurrence, :created_at)'
         );
         $stmt->execute(['identity_user_id' => $identityUserId, 'calendar_id' => $calendarId, 'uri' => $uri, 'created_at' => $now] + $parsed);
         $id = (int) $this->pdo->lastInsertId();
@@ -154,6 +154,75 @@ final class CalendarStore
             $this->touchCalendar($calendarId, (string) $existing['uri'], 'updated');
         }
         return $this->find($identityUserId, $id) ?? [];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function complete(string $identityUserId, int $id): array
+    {
+        return $this->update($identityUserId, $id, [
+            'status' => 'completed',
+            'completed_at' => gmdate('c'),
+        ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function reopen(string $identityUserId, int $id): array
+    {
+        return $this->update($identityUserId, $id, [
+            'status' => 'active',
+            'completed_at' => null,
+        ]);
+    }
+
+    /**
+     * Resolve a calendar to write into from an optional member-supplied name: an
+     * exact or case-insensitive match against the member's own calendars, the
+     * member's first calendar when no name is given, or a newly-created default
+     * calendar when the member has none yet.
+     */
+    public function resolveCalendarId(string $identityUserId, ?string $calendarName): int
+    {
+        $calendars = $this->calendars($identityUserId);
+        $name = trim((string) $calendarName);
+
+        if ($name !== '') {
+            foreach ($calendars as $calendar) {
+                if (strcasecmp((string) $calendar['name'], $name) === 0) {
+                    return (int) $calendar['id'];
+                }
+            }
+        }
+
+        if ($calendars !== []) {
+            return (int) $calendars[0]['id'];
+        }
+
+        return $this->createDefaultCalendar($identityUserId);
+    }
+
+    private function createDefaultCalendar(string $identityUserId): int
+    {
+        $now = gmdate('Y-m-d H:i:s');
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO time_calendars
+                (identity_user_id, uri, name, components, sync_token, status, created_at)
+             VALUES
+                (:identity_user_id, :uri, :name, :components, 1, :status, :created_at)
+             ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)'
+        );
+        $stmt->execute([
+            'identity_user_id' => $identityUserId,
+            'uri' => 'default',
+            'name' => 'Calendar',
+            'components' => 'VEVENT,VTODO',
+            'status' => 'active',
+            'created_at' => $now,
+        ]);
+        return (int) $this->pdo->lastInsertId();
     }
 
     public function delete(string $identityUserId, int $id): void
@@ -355,6 +424,7 @@ final class CalendarStore
             'priority' => $row['priority'] === null ? null : (int) $row['priority'],
             'recurrence_rule' => $row['recurrence_rule'] ?? null,
             'alarm_trigger' => $row['alarm_trigger'] ?? $this->alarmTrigger((string) $row['calendar_data']),
+            'attendees' => $this->decodeAttendees($row['attendees'] ?? null),
             'source' => $row['source_service'] === null ? null : [
                 'service' => (string) $row['source_service'],
                 'object_type' => (string) ($row['source_object_type'] ?? ''),
@@ -364,8 +434,20 @@ final class CalendarStore
             'local_visibility' => (string) ($row['local_visibility'] ?? 'default'),
             'editable_fields' => $row['source_service'] === 'social'
                 ? ['calendar_id', 'local_visibility', 'alarm_trigger']
-                : ['calendar_id', 'title', 'description', 'location', 'starts_at', 'ends_at', 'due_at', 'completed_at', 'all_day', 'status', 'priority', 'recurrence_rule', 'alarm_trigger'],
+                : ['calendar_id', 'title', 'description', 'location', 'starts_at', 'ends_at', 'due_at', 'completed_at', 'all_day', 'status', 'priority', 'recurrence_rule', 'alarm_trigger', 'attendees'],
         ];
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function decodeAttendees(mixed $value): array
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return [];
+        }
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
     }
 
     /** @param array<string, mixed> $object */

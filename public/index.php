@@ -147,9 +147,7 @@ $router->post('/time/call', static function () use ($config): void {
     }
 
     if ($operation === 'time.open') {
-        $objectId = trim((string) ($content['object_id'] ?? ''));
-        $parts = explode(':', $objectId, 2);
-        $numericId = $parts[0] === 'time.calendar_object' ? positiveInt($parts[1] ?? null) : null;
+        $numericId = timeCalendarObjectIdFrom($content['object_id'] ?? null);
         if ($numericId === null) {
             timeServiceDatasetError('time.object_not_found', 'not_found', 'Time object was not found.', 404, $caller['service']);
             return;
@@ -160,6 +158,178 @@ $router->post('/time/call', static function () use ($config): void {
             return;
         }
         Response::json(timeOpenDataset($row, 'time.open', $caller['service']));
+        return;
+    }
+
+    if ($operation === 'time.calendars') {
+        $store = new CalendarStore($pdo);
+        Response::json(timeCalendarsDataset($store->calendars($memberId), $caller['service']));
+        return;
+    }
+
+    if ($operation === 'time.agenda') {
+        $timezoneName = cleanOptionalString($content['timezone'] ?? null) ?? 'UTC';
+        if (validTimezone($timezoneName) === null) {
+            timeServiceDatasetError('time.invalid_event_call', 'invalid_call', 'timezone is not valid.', 422, $caller['service']);
+            return;
+        }
+        $start = timeParseDateTime($content['start'] ?? null, $timezoneName);
+        $end = timeParseDateTime($content['end'] ?? null, $timezoneName);
+        if ($start === null || $end === null || $end <= $start) {
+            timeServiceDatasetError('time.invalid_event_call', 'invalid_call', 'start and end must be valid, and end must be after start.', 422, $caller['service']);
+            return;
+        }
+        Response::json(timeServiceDataset(timeAgendaObjects($pdo, $memberId, $start, $end), 'time.agenda', $caller['service'], ''));
+        return;
+    }
+
+    if ($operation === 'time.tasks') {
+        $status = cleanOptionalString($content['status'] ?? null) ?? 'open';
+        if (!in_array($status, ['open', 'completed', 'all'], true)) {
+            timeServiceDatasetError('time.invalid_task_call', 'invalid_call', 'status must be open, completed, or all.', 422, $caller['service']);
+            return;
+        }
+        $dueBefore = timeParseDateTime($content['due_before'] ?? null, null);
+        $dueAfter = timeParseDateTime($content['due_after'] ?? null, null);
+        Response::json(timeServiceDataset(timeTaskObjects($pdo, $memberId, $status, $dueBefore, $dueAfter), 'time.tasks', $caller['service'], ''));
+        return;
+    }
+
+    if ($operation === 'time.event.create') {
+        [$fields, $error] = timeEventFieldsFromContent($content, true);
+        if ($error !== null) {
+            timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $error, 422, $caller['service']);
+            return;
+        }
+        $store = new CalendarStore($pdo);
+        $fields['calendar_id'] = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+        try {
+            $created = $store->create($memberId, $fields);
+        } catch (\Throwable $throwable) {
+            timeServiceDatasetError('time.validation_failed', 'invalid_call', $throwable->getMessage(), 422, $caller['service']);
+            return;
+        }
+        $row = timeFetchObject($pdo, $memberId, (int) $created['id']);
+        Response::json(timeOpenDataset($row ?? [], 'time.event.create', $caller['service']));
+        return;
+    }
+
+    if ($operation === 'time.event.update' || $operation === 'time.event.delete') {
+        $numericId = timeCalendarObjectIdFrom($content['object_id'] ?? null);
+        if ($numericId === null) {
+            timeServiceDatasetError('time.object_not_found', 'not_found', 'Time object was not found.', 404, $caller['service']);
+            return;
+        }
+        $store = new CalendarStore($pdo);
+        $existing = $store->find($memberId, $numericId);
+        if ($existing === null) {
+            timeServiceDatasetError('time.object_not_found', 'not_found', 'Time object was not found.', 404, $caller['service']);
+            return;
+        }
+
+        if ($operation === 'time.event.delete') {
+            try {
+                $store->delete($memberId, $numericId);
+            } catch (\DomainException $domainException) {
+                timeServiceDatasetError('time.forbidden_mutation', 'forbidden', $domainException->getMessage(), 403, $caller['service']);
+                return;
+            }
+            Response::json(timeServiceDataset([], 'time.event.delete', $caller['service'], ''));
+            return;
+        }
+
+        [$fields, $error] = timeEventFieldsFromContent($content, false);
+        if ($error !== null) {
+            timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $error, 422, $caller['service']);
+            return;
+        }
+        if (array_key_exists('starts_at', $fields) && !array_key_exists('ends_at', $fields)
+            && $existing['starts_at'] !== null && $existing['ends_at'] !== null) {
+            $oldStart = new DateTimeImmutable((string) $existing['starts_at']);
+            $oldEnd = new DateTimeImmutable((string) $existing['ends_at']);
+            $newStart = new DateTimeImmutable($fields['starts_at']);
+            $fields['ends_at'] = $newStart->add($oldStart->diff($oldEnd))->format('Y-m-d H:i:s');
+        }
+        if (array_key_exists('calendar', $content)) {
+            $fields['calendar_id'] = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+        }
+        try {
+            $store->update($memberId, $numericId, $fields);
+        } catch (\DomainException $domainException) {
+            timeServiceDatasetError('time.forbidden_mutation', 'forbidden', $domainException->getMessage(), 403, $caller['service']);
+            return;
+        } catch (\Throwable $throwable) {
+            timeServiceDatasetError('time.validation_failed', 'invalid_call', $throwable->getMessage(), 422, $caller['service']);
+            return;
+        }
+        $row = timeFetchObject($pdo, $memberId, $numericId);
+        Response::json(timeOpenDataset($row ?? [], 'time.event.update', $caller['service']));
+        return;
+    }
+
+    if ($operation === 'time.task.create') {
+        [$fields, $error] = timeTaskFieldsFromContent($content, true);
+        if ($error !== null) {
+            timeServiceDatasetError('time.invalid_task_call', 'invalid_call', $error, 422, $caller['service']);
+            return;
+        }
+        $fields['component_type'] = 'VTODO';
+        $store = new CalendarStore($pdo);
+        $fields['calendar_id'] = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+        try {
+            $created = $store->create($memberId, $fields);
+        } catch (\Throwable $throwable) {
+            timeServiceDatasetError('time.validation_failed', 'invalid_call', $throwable->getMessage(), 422, $caller['service']);
+            return;
+        }
+        $row = timeFetchObject($pdo, $memberId, (int) $created['id']);
+        Response::json(timeOpenDataset($row ?? [], 'time.task.create', $caller['service']));
+        return;
+    }
+
+    if (in_array($operation, ['time.task.update', 'time.task.complete', 'time.task.reopen', 'time.task.delete'], true)) {
+        $numericId = timeCalendarObjectIdFrom($content['object_id'] ?? null);
+        if ($numericId === null) {
+            timeServiceDatasetError('time.object_not_found', 'not_found', 'Time object was not found.', 404, $caller['service']);
+            return;
+        }
+        $store = new CalendarStore($pdo);
+        $existing = $store->find($memberId, $numericId);
+        if ($existing === null || $existing['component_type'] !== 'VTODO') {
+            timeServiceDatasetError('time.object_not_found', 'not_found', 'Time object was not found.', 404, $caller['service']);
+            return;
+        }
+
+        try {
+            if ($operation === 'time.task.delete') {
+                $store->delete($memberId, $numericId);
+                Response::json(timeServiceDataset([], 'time.task.delete', $caller['service'], ''));
+                return;
+            }
+            if ($operation === 'time.task.complete') {
+                $store->complete($memberId, $numericId);
+            } elseif ($operation === 'time.task.reopen') {
+                $store->reopen($memberId, $numericId);
+            } else {
+                [$fields, $error] = timeTaskFieldsFromContent($content, false);
+                if ($error !== null) {
+                    timeServiceDatasetError('time.invalid_task_call', 'invalid_call', $error, 422, $caller['service']);
+                    return;
+                }
+                if (array_key_exists('calendar', $content)) {
+                    $fields['calendar_id'] = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+                }
+                $store->update($memberId, $numericId, $fields);
+            }
+        } catch (\DomainException $domainException) {
+            timeServiceDatasetError('time.forbidden_mutation', 'forbidden', $domainException->getMessage(), 403, $caller['service']);
+            return;
+        } catch (\Throwable $throwable) {
+            timeServiceDatasetError('time.validation_failed', 'invalid_call', $throwable->getMessage(), 422, $caller['service']);
+            return;
+        }
+        $row = timeFetchObject($pdo, $memberId, $numericId);
+        Response::json(timeOpenDataset($row ?? [], $operation, $caller['service']));
         return;
     }
 
@@ -1106,26 +1276,28 @@ function timeSearchObjects(PDO $pdo, string $memberId, string $text, int $limit)
 {
     $like = '%' . str_replace(['%', '_'], ['\%', '\_'], mb_strtolower($text)) . '%';
     $stmt = $pdo->prepare(
-        'SELECT id, identity_user_id, calendar_id, uri, uid, component_type, title, description, location,
-                starts_at, ends_at, due_at, completed_at, timezone, all_day, status, priority,
-                source_service, source_object_type, source_object_id, source_url, created_at, updated_at,
+        'SELECT o.id, o.identity_user_id, o.calendar_id, o.uri, o.uid, o.component_type, o.title, o.description, o.location,
+                o.starts_at, o.ends_at, o.due_at, o.completed_at, o.timezone, o.all_day, o.status, o.priority,
+                o.recurrence_rule, o.attendees, o.source_service, o.source_object_type, o.source_object_id, o.source_url, o.created_at, o.updated_at,
+                c.name AS calendar_name,
                 CASE
-                    WHEN LOWER(title) = :exact THEN 1.0
-                    WHEN LOWER(title) LIKE :title_prefix THEN 0.86
-                    WHEN LOWER(title) LIKE :title_like THEN 0.74
-                    WHEN LOWER(COALESCE(description, "")) LIKE :description_like THEN 0.62
-                    WHEN LOWER(COALESCE(location, "")) LIKE :location_like THEN 0.58
+                    WHEN LOWER(o.title) = :exact THEN 1.0
+                    WHEN LOWER(o.title) LIKE :title_prefix THEN 0.86
+                    WHEN LOWER(o.title) LIKE :title_like THEN 0.74
+                    WHEN LOWER(COALESCE(o.description, "")) LIKE :description_like THEN 0.62
+                    WHEN LOWER(COALESCE(o.location, "")) LIKE :location_like THEN 0.58
                     ELSE 0.0
                 END AS search_confidence
-         FROM time_calendar_objects
-         WHERE identity_user_id = :member_id
-           AND status <> "deleted"
+         FROM time_calendar_objects o
+         INNER JOIN time_calendars c ON c.id = o.calendar_id
+         WHERE o.identity_user_id = :member_id
+           AND o.status <> "deleted"
            AND (
-                LOWER(title) LIKE :title_filter
-                OR LOWER(COALESCE(description, "")) LIKE :description_filter
-                OR LOWER(COALESCE(location, "")) LIKE :location_filter
+                LOWER(o.title) LIKE :title_filter
+                OR LOWER(COALESCE(o.description, "")) LIKE :description_filter
+                OR LOWER(COALESCE(o.location, "")) LIKE :location_filter
            )
-         ORDER BY search_confidence DESC, COALESCE(starts_at, due_at, updated_at, created_at) DESC, id DESC
+         ORDER BY search_confidence DESC, COALESCE(o.starts_at, o.due_at, o.updated_at, o.created_at) DESC, o.id DESC
          LIMIT ' . max(1, min(25, $limit))
     );
     $stmt->execute([
@@ -1147,14 +1319,16 @@ function timeSearchObjects(PDO $pdo, string $memberId, string $text, int $limit)
 function timeRecentObjects(PDO $pdo, string $memberId, int $limit): array
 {
     $stmt = $pdo->prepare(
-        'SELECT id, identity_user_id, calendar_id, uri, uid, component_type, title, description, location,
-                starts_at, ends_at, due_at, completed_at, timezone, all_day, status, priority,
-                source_service, source_object_type, source_object_id, source_url, created_at, updated_at,
+        'SELECT o.id, o.identity_user_id, o.calendar_id, o.uri, o.uid, o.component_type, o.title, o.description, o.location,
+                o.starts_at, o.ends_at, o.due_at, o.completed_at, o.timezone, o.all_day, o.status, o.priority,
+                o.recurrence_rule, o.attendees, o.source_service, o.source_object_type, o.source_object_id, o.source_url, o.created_at, o.updated_at,
+                c.name AS calendar_name,
                 0.5 AS search_confidence
-         FROM time_calendar_objects
-         WHERE identity_user_id = :member_id
-           AND status <> "deleted"
-         ORDER BY COALESCE(starts_at, due_at, updated_at, created_at) DESC, id DESC
+         FROM time_calendar_objects o
+         INNER JOIN time_calendars c ON c.id = o.calendar_id
+         WHERE o.identity_user_id = :member_id
+           AND o.status <> "deleted"
+         ORDER BY COALESCE(o.starts_at, o.due_at, o.updated_at, o.created_at) DESC, o.id DESC
          LIMIT ' . max(1, min(25, $limit))
     );
     $stmt->execute(['member_id' => $memberId]);
@@ -1166,17 +1340,307 @@ function timeRecentObjects(PDO $pdo, string $memberId, int $limit): array
 function timeFetchObject(PDO $pdo, string $memberId, int $id): ?array
 {
     $stmt = $pdo->prepare(
-        'SELECT id, identity_user_id, calendar_id, uri, uid, component_type, title, description, location,
-                starts_at, ends_at, due_at, completed_at, timezone, all_day, status, priority,
-                source_service, source_object_type, source_object_id, source_url, created_at, updated_at,
+        'SELECT o.id, o.identity_user_id, o.calendar_id, o.uri, o.uid, o.component_type, o.title, o.description, o.location,
+                o.starts_at, o.ends_at, o.due_at, o.completed_at, o.timezone, o.all_day, o.status, o.priority,
+                o.recurrence_rule, o.attendees, o.source_service, o.source_object_type, o.source_object_id, o.source_url, o.created_at, o.updated_at,
+                c.name AS calendar_name,
                 1.0 AS search_confidence
-         FROM time_calendar_objects
-         WHERE id = :id AND identity_user_id = :member_id AND status <> "deleted"'
+         FROM time_calendar_objects o
+         INNER JOIN time_calendars c ON c.id = o.calendar_id
+         WHERE o.id = :id AND o.identity_user_id = :member_id AND o.status <> "deleted"'
     );
     $stmt->execute(['id' => $id, 'member_id' => $memberId]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
     return $row === false ? null : $row;
+}
+
+/** A Dataset action's object_id is always "time.calendar_object:<numeric id>" -- parse that back out. */
+function timeCalendarObjectIdFrom(mixed $objectId): ?int
+{
+    $parts = explode(':', trim((string) $objectId), 2);
+    return $parts[0] === 'time.calendar_object' ? positiveInt($parts[1] ?? null) : null;
+}
+
+function timeParseDateTime(mixed $value, ?string $timezone): ?DateTimeImmutable
+{
+    $text = trim((string) $value);
+    if ($text === '') {
+        return null;
+    }
+    try {
+        $zone = ($timezone !== null && $timezone !== '') ? new DateTimeZone($timezone) : null;
+        return new DateTimeImmutable($text, $zone);
+    } catch (\Throwable) {
+        return null;
+    }
+}
+
+/**
+ * Builds the field set CalendarStore::create()/update() expect from a time.event.* Call's
+ * content, validating along the way. $requireCore is true for time.event.create (title and
+ * starts_at must be present; ends_at defaults to starts_at + 1 hour) and false for
+ * time.event.update (every field is optional; only the keys present in $content are returned,
+ * so CalendarStore::update()'s merge leaves everything else untouched).
+ *
+ * @param array<string, mixed> $content
+ * @return array{0: array<string, mixed>, 1: ?string}
+ */
+function timeEventFieldsFromContent(array $content, bool $requireCore): array
+{
+    $fields = [];
+
+    if (array_key_exists('title', $content)) {
+        $title = trim((string) $content['title']);
+        if ($title === '') {
+            return [[], 'title cannot be empty.'];
+        }
+        $fields['title'] = $title;
+    } elseif ($requireCore) {
+        return [[], 'title is required.'];
+    }
+
+    $timezone = cleanOptionalString($content['timezone'] ?? null);
+    if ($timezone !== null && validTimezone($timezone) === null) {
+        return [[], 'timezone is not valid.'];
+    }
+    if ($timezone !== null) {
+        $fields['timezone'] = $timezone;
+    }
+
+    $startsAt = null;
+    if (array_key_exists('starts_at', $content)) {
+        $startsAt = timeParseDateTime($content['starts_at'], $timezone);
+        if ($startsAt === null) {
+            return [[], 'starts_at is not a valid date/time.'];
+        }
+        $fields['starts_at'] = $startsAt->format('Y-m-d H:i:s');
+    } elseif ($requireCore) {
+        return [[], 'starts_at is required.'];
+    }
+
+    $endsAtRaw = cleanOptionalString($content['ends_at'] ?? null);
+    if ($endsAtRaw !== null) {
+        $endsAt = timeParseDateTime($endsAtRaw, $timezone);
+        if ($endsAt === null) {
+            return [[], 'ends_at is not a valid date/time.'];
+        }
+        $fields['ends_at'] = $endsAt->format('Y-m-d H:i:s');
+    } elseif ($requireCore && $startsAt !== null) {
+        $fields['ends_at'] = $startsAt->modify('+1 hour')->format('Y-m-d H:i:s');
+    }
+
+    if (array_key_exists('all_day', $content)) {
+        $fields['all_day'] = truthy($content['all_day']) ? 1 : 0;
+    }
+
+    foreach (['location', 'description', 'recurrence_rule', 'attendees'] as $key) {
+        if (array_key_exists($key, $content)) {
+            $value = trim((string) $content[$key]);
+            $fields[$key] = $value === '' ? null : $value;
+        }
+    }
+
+    return [$fields, null];
+}
+
+/**
+ * Same shape as timeEventFieldsFromContent(), for time.task.create / time.task.update.
+ *
+ * @param array<string, mixed> $content
+ * @return array{0: array<string, mixed>, 1: ?string}
+ */
+function timeTaskFieldsFromContent(array $content, bool $requireCore): array
+{
+    $fields = [];
+
+    if (array_key_exists('title', $content)) {
+        $title = trim((string) $content['title']);
+        if ($title === '') {
+            return [[], 'title cannot be empty.'];
+        }
+        $fields['title'] = $title;
+    } elseif ($requireCore) {
+        return [[], 'title is required.'];
+    }
+
+    foreach (['due_at', 'starts_at'] as $key) {
+        if (!array_key_exists($key, $content)) {
+            continue;
+        }
+        $raw = cleanOptionalString($content[$key] ?? null);
+        if ($raw === null) {
+            $fields[$key] = null;
+            continue;
+        }
+        $parsed = timeParseDateTime($raw, null);
+        if ($parsed === null) {
+            return [[], $key . ' is not a valid date/time.'];
+        }
+        $fields[$key] = $parsed->format('Y-m-d H:i:s');
+    }
+
+    if (array_key_exists('priority', $content)) {
+        if ($content['priority'] === null || $content['priority'] === '') {
+            $fields['priority'] = null;
+        } else {
+            $priority = (int) $content['priority'];
+            if ($priority < 0 || $priority > 9) {
+                return [[], 'priority must be between 0 and 9.'];
+            }
+            $fields['priority'] = $priority;
+        }
+    }
+
+    foreach (['description', 'recurrence_rule'] as $key) {
+        if (array_key_exists($key, $content)) {
+            $value = trim((string) $content[$key]);
+            $fields[$key] = $value === '' ? null : $value;
+        }
+    }
+
+    return [$fields, null];
+}
+
+/** @return array<int, array<string, mixed>> */
+function timeAgendaObjects(PDO $pdo, string $memberId, DateTimeImmutable $start, DateTimeImmutable $end): array
+{
+    $utc = new DateTimeZone('UTC');
+    $stmt = $pdo->prepare(
+        'SELECT o.id, o.identity_user_id, o.calendar_id, o.uri, o.uid, o.component_type, o.title, o.description, o.location,
+                o.starts_at, o.ends_at, o.due_at, o.completed_at, o.timezone, o.all_day, o.status, o.priority,
+                o.recurrence_rule, o.attendees, o.calendar_data, o.source_service, o.source_object_type, o.source_object_id,
+                o.source_url, o.created_at, o.updated_at, c.name AS calendar_name, 1.0 AS search_confidence
+         FROM time_calendar_objects o
+         INNER JOIN time_calendars c ON c.id = o.calendar_id
+         WHERE o.identity_user_id = :member_id
+           AND o.component_type = "VEVENT"
+           AND o.status <> "deleted"
+           AND (
+                o.recurrence_rule IS NOT NULL
+                OR (o.starts_at IS NOT NULL AND o.starts_at < :range_end AND COALESCE(o.ends_at, o.starts_at) >= :range_start)
+           )
+         ORDER BY o.starts_at, o.id'
+    );
+    $stmt->execute([
+        'member_id' => $memberId,
+        'range_start' => $start->setTimezone($utc)->format('Y-m-d H:i:s'),
+        'range_end' => $end->setTimezone($utc)->format('Y-m-d H:i:s'),
+    ]);
+
+    $result = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $calendarData = (string) $row['calendar_data'];
+        unset($row['calendar_data']);
+        if (($row['recurrence_rule'] ?? null) === null) {
+            $result[] = $row;
+            continue;
+        }
+        try {
+            $calendar = \Sabre\VObject\Reader::read($calendarData);
+            $iterator = new \Sabre\VObject\Recur\EventIterator($calendar, (string) $row['uid']);
+            $iterator->fastForward($start);
+            while ($iterator->valid() && $iterator->getDTStart() < $end) {
+                $occurrence = $row;
+                $occurrence['occurrence_start'] = $iterator->getDTStart()->setTimezone($utc)->format('Y-m-d H:i:s');
+                $occurrence['occurrence_end'] = $iterator->getDTEnd()->setTimezone($utc)->format('Y-m-d H:i:s');
+                $result[] = $occurrence;
+                $iterator->next();
+            }
+        } catch (\Throwable) {
+            $result[] = $row;
+        }
+    }
+    return $result;
+}
+
+/** @return array<int, array<string, mixed>> */
+function timeTaskObjects(PDO $pdo, string $memberId, string $status, ?DateTimeImmutable $dueBefore, ?DateTimeImmutable $dueAfter): array
+{
+    $utc = new DateTimeZone('UTC');
+    $sql = 'SELECT o.id, o.identity_user_id, o.calendar_id, o.uri, o.uid, o.component_type, o.title, o.description, o.location,
+                   o.starts_at, o.ends_at, o.due_at, o.completed_at, o.timezone, o.all_day, o.status, o.priority,
+                   o.recurrence_rule, o.attendees, o.source_service, o.source_object_type, o.source_object_id, o.source_url,
+                   o.created_at, o.updated_at, c.name AS calendar_name, 1.0 AS search_confidence
+            FROM time_calendar_objects o
+            INNER JOIN time_calendars c ON c.id = o.calendar_id
+            WHERE o.identity_user_id = :member_id AND o.component_type = "VTODO" AND o.status <> "deleted"';
+    $params = ['member_id' => $memberId];
+
+    if ($status === 'open') {
+        $sql .= ' AND o.completed_at IS NULL';
+    } elseif ($status === 'completed') {
+        $sql .= ' AND o.completed_at IS NOT NULL';
+    }
+    if ($dueBefore !== null) {
+        $sql .= ' AND o.due_at IS NOT NULL AND o.due_at < :due_before';
+        $params['due_before'] = $dueBefore->setTimezone($utc)->format('Y-m-d H:i:s');
+    }
+    if ($dueAfter !== null) {
+        $sql .= ' AND o.due_at IS NOT NULL AND o.due_at >= :due_after';
+        $params['due_after'] = $dueAfter->setTimezone($utc)->format('Y-m-d H:i:s');
+    }
+    $sql .= ' ORDER BY (o.completed_at IS NOT NULL), (o.due_at IS NULL), o.due_at, o.priority, o.id';
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/** @param array<int, array<string, mixed>> $calendar @return array<string, mixed> */
+function timeCalendarObject(array $calendar): array
+{
+    $id = 'time.calendar:' . (string) $calendar['id'];
+    return [
+        'id' => $id,
+        'type' => 'time.calendar',
+        'title' => (string) $calendar['name'],
+        'summary' => (string) ($calendar['description'] ?? ''),
+        'content' => [
+            'name' => (string) $calendar['name'],
+            'description' => $calendar['description'] ?? null,
+            'color' => $calendar['color'] ?? null,
+            'timezone' => $calendar['timezone'] ?? null,
+            'components' => (string) ($calendar['components'] ?? ''),
+            'source' => ($calendar['source_service'] ?? null) === null ? null : ['service' => (string) $calendar['source_service']],
+        ],
+        'permissions' => ['can_view' => true, 'can_act' => false, 'can_share' => false],
+        'resources' => [],
+        'actions' => ['local' => [], 'inbound' => [], 'outbound' => []],
+        'relationships' => [],
+        'metadata' => ['service' => 'time', 'source_id' => (string) $calendar['id']],
+    ];
+}
+
+/** @param array<int, array<string, mixed>> $calendars @return array<string, mixed> */
+function timeCalendarsDataset(array $calendars, string $caller): array
+{
+    $objects = array_map('timeCalendarObject', $calendars);
+    $collectionId = 'collection:time.calendars:' . bin2hex(random_bytes(8));
+    $summary = count($objects) === 0 ? 'No calendars are available yet.' : count($objects) . ' calendars available.';
+
+    return [
+        'id' => 'dataset:service:time:' . bin2hex(random_bytes(16)),
+        'type' => 'service',
+        'scope' => count($objects) === 1 ? 'object' : 'collection',
+        'mode' => 'snapshot',
+        'created' => gmdate('c'),
+        'objects' => $objects,
+        'actions' => [],
+        'relationships' => [],
+        'collections' => count($objects) !== 1 ? [[
+            'id' => $collectionId,
+            'type' => 'time.calendars.results',
+            'title' => 'Calendars',
+            'summary' => $summary,
+            'items' => array_map(static fn (array $o): string => (string) $o['id'], $objects),
+            'content' => ['count' => count($objects), 'description' => $summary],
+        ]] : [],
+        'resources' => [],
+        'placements' => [],
+        'errors' => [],
+        'context' => ['service' => 'time', 'operation' => 'time.calendars', 'caller' => $caller],
+    ];
 }
 
 /** @param array<string, mixed> $row @return array<string, mixed> */
@@ -1215,17 +1679,21 @@ function timeObjectFromRow(array $row): array
         'title' => (string) $row['title'],
         'summary' => (string) ($row['description'] ?? ''),
         'content' => [
+            'title' => (string) $row['title'],
             'name' => (string) $row['title'],
             'description' => (string) ($row['description'] ?? ''),
             'component_type' => $componentType,
             'location' => $row['location'] ?? null,
-            'starts_at' => $row['starts_at'] ?? null,
-            'ends_at' => $row['ends_at'] ?? null,
+            'starts_at' => $row['occurrence_start'] ?? $row['starts_at'] ?? null,
+            'ends_at' => $row['occurrence_end'] ?? $row['ends_at'] ?? null,
             'due_at' => $row['due_at'] ?? null,
             'completed_at' => $row['completed_at'] ?? null,
             'all_day' => (bool) ($row['all_day'] ?? false),
             'status' => (string) ($row['status'] ?? ''),
             'priority' => $row['priority'] ?? null,
+            'recurrence_rule' => $row['recurrence_rule'] ?? null,
+            'calendar' => (string) ($row['calendar_name'] ?? ''),
+            'attendees' => timeFormatAttendees($row['attendees'] ?? null),
             'source' => [
                 'service' => $row['source_service'] ?? null,
                 'object_type' => $row['source_object_type'] ?? null,
@@ -1241,13 +1709,42 @@ function timeObjectFromRow(array $row): array
         'permissions' => ['can_view' => true, 'can_act' => true, 'can_share' => false],
         'resources' => $sourceUrl !== '' ? ['resource:' . $id . ':source'] : [],
         'actions' => [
-            'local' => timeObjectActions($id),
+            'local' => timeObjectActions($id, $componentType, $row),
             'inbound' => [],
             'outbound' => [],
         ],
         'relationships' => [],
         'metadata' => ['service' => 'time', 'source_id' => (string) $row['id'], 'uid' => (string) ($row['uid'] ?? '')],
     ];
+}
+
+/**
+ * Renders a stored attendees JSON payload back into the same comma-separated
+ * "Name <email>" / bare-email string shape the Contract's `attendees` argument
+ * accepts, so a generic Runtime form prefills with editable text, not raw JSON.
+ */
+function timeFormatAttendees(mixed $value): string
+{
+    if (!is_string($value) || trim($value) === '') {
+        return '';
+    }
+    $decoded = json_decode($value, true);
+    if (!is_array($decoded)) {
+        return '';
+    }
+    $parts = [];
+    foreach ($decoded as $attendee) {
+        if (!is_array($attendee)) {
+            continue;
+        }
+        $email = trim((string) ($attendee['email'] ?? ''));
+        if ($email === '') {
+            continue;
+        }
+        $name = trim((string) ($attendee['name'] ?? ''));
+        $parts[] = $name !== '' ? $name . ' <' . $email . '>' : $email;
+    }
+    return implode(', ', $parts);
 }
 
 /**
@@ -1296,15 +1793,18 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
 }
 
 /**
- * The one real action every Time calendar object carries -- a real Contract operation_invocation,
+ * The real actions every Time calendar object carries -- real Contract operation_invocations,
  * not a dead href into time.elonn.local's own REST routes, which a browser talking only to
- * web.elonn.local can never reach directly.
+ * web.elonn.local can never reach directly. A Social-owned mirror only ever gets Open: its core
+ * fields are read-only here (CalendarStore::update()/delete() already enforce this server-side;
+ * this just keeps a mirror from offering an action that would fail).
  *
+ * @param array<string, mixed> $row
  * @return array<int, array<string, mixed>>
  */
-function timeObjectActions(string $id): array
+function timeObjectActions(string $id, string $componentType, array $row): array
 {
-    return [[
+    $actions = [[
         'id' => 'open_time_object',
         'type' => 'open_object',
         'label' => 'Open',
@@ -1316,6 +1816,60 @@ function timeObjectActions(string $id): array
         ],
         'availability' => 'enabled',
     ]];
+
+    if (($row['source_service'] ?? null) === 'social') {
+        return $actions;
+    }
+
+    if ($componentType === 'VTODO') {
+        $isCompleted = ($row['completed_at'] ?? null) !== null || strtolower((string) ($row['status'] ?? '')) === 'completed';
+        $actions[] = [
+            'id' => 'update_task',
+            'type' => 'update_object',
+            'label' => 'Edit',
+            'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.update', 'object_id' => $id, 'payload' => []],
+            'availability' => 'enabled',
+        ];
+        $actions[] = $isCompleted
+            ? [
+                'id' => 'reopen_task',
+                'type' => 'reopen_task',
+                'label' => 'Reopen',
+                'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.reopen', 'object_id' => $id, 'payload' => []],
+                'availability' => 'enabled',
+            ]
+            : [
+                'id' => 'complete_task',
+                'type' => 'complete_task',
+                'label' => 'Complete',
+                'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.complete', 'object_id' => $id, 'payload' => []],
+                'availability' => 'enabled',
+            ];
+        $actions[] = [
+            'id' => 'delete_task',
+            'type' => 'delete_object',
+            'label' => 'Delete',
+            'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.delete', 'object_id' => $id, 'payload' => []],
+            'availability' => 'enabled',
+        ];
+        return $actions;
+    }
+
+    $actions[] = [
+        'id' => 'update_event',
+        'type' => 'update_object',
+        'label' => 'Edit',
+        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.event.update', 'object_id' => $id, 'payload' => []],
+        'availability' => 'enabled',
+    ];
+    $actions[] = [
+        'id' => 'delete_event',
+        'type' => 'delete_object',
+        'label' => 'Delete',
+        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.event.delete', 'object_id' => $id, 'payload' => []],
+        'availability' => 'enabled',
+    ];
+    return $actions;
 }
 
 /**
@@ -2602,12 +3156,12 @@ function syncLegacyEventObject(PDO $pdo, array $event): void
             'INSERT INTO time_calendar_objects
                 (identity_user_id, calendar_id, uri, uid, component_type, calendar_data, etag, size_bytes,
                  title, description, location, starts_at, ends_at, due_at, completed_at, timezone, all_day,
-                 status, priority, recurrence_rule, alarm_trigger, first_occurrence, last_occurrence,
+                 status, priority, recurrence_rule, alarm_trigger, attendees, first_occurrence, last_occurrence,
                  source_service, source_object_type, source_object_id, source_url, created_at)
              VALUES
                 (:identity_user_id, :calendar_id, :uri, :uid, :component_type, :calendar_data, :etag, :size_bytes,
                  :title, :description, :location, :starts_at, :ends_at, :due_at, :completed_at, :timezone, :all_day,
-                 :status, :priority, :recurrence_rule, :alarm_trigger, :first_occurrence, :last_occurrence,
+                 :status, :priority, :recurrence_rule, :alarm_trigger, :attendees, :first_occurrence, :last_occurrence,
                  :source_service, :source_object_type, :source_object_id, :source_url, :created_at)'
         );
         $stmt->execute($parsed + [

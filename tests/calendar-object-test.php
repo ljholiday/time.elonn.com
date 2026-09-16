@@ -48,6 +48,27 @@ $parsedTimezoneAppointment = CalendarObject::parse($timezoneAppointment);
 $checks['Timezone round trip'] = $parsedTimezoneAppointment['timezone'] === 'America/Los_Angeles'
     && $parsedTimezoneAppointment['starts_at'] === '2026-06-22 16:00:00';
 
+$appointmentWithAttendees = CalendarObject::build([
+    'component_type' => 'VEVENT',
+    'title' => 'Lunch with JJ',
+    'starts_at' => '2026-06-22 12:00:00',
+    'ends_at' => '2026-06-22 13:00:00',
+    'attendees' => 'Jane Smith <jane@example.com>, bob@example.com',
+]);
+$parsedAttendees = json_decode((string) CalendarObject::parse($appointmentWithAttendees)['attendees'], true);
+$checks['Attendees round trip'] = $parsedAttendees === [
+    ['name' => 'Jane Smith', 'email' => 'jane@example.com'],
+    ['email' => 'bob@example.com'],
+];
+
+$appointmentNoAttendees = CalendarObject::build([
+    'component_type' => 'VEVENT',
+    'title' => 'No attendees',
+    'starts_at' => '2026-06-22 12:00:00',
+    'ends_at' => '2026-06-22 13:00:00',
+]);
+$checks['Attendees absent when none supplied'] = CalendarObject::parse($appointmentNoAttendees)['attendees'] === null;
+
 $failed = 0;
 foreach ($checks as $label => $passed) {
     echo ($passed ? 'PASS' : 'FAIL') . ': ' . $label . PHP_EOL;

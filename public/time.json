@@ -6,12 +6,38 @@
     "purpose": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar objects. Does not own Social events (social.event, owned by social.elonn) -- Social events synced into a member's calendar arrive here only as ingested calendar objects with a source reference back to Social."
   },
   "contract": {
-    "revision": 2,
-    "published": "2026-08-22T00:00:00Z"
+    "revision": 3,
+    "published": "2026-09-15T00:00:00Z"
   },
   "labels": {
     "field.search_text": "Search",
-    "field.result_limit": "How many to show"
+    "field.result_limit": "How many to show",
+    "field.title": "Title",
+    "field.description": "Description",
+    "field.location": "Location",
+    "field.starts_at": "Starts",
+    "help.starts_at": "An ISO 8601 date/time, e.g. 2026-09-18T12:00:00-04:00.",
+    "field.ends_at": "Ends",
+    "field.all_day": "All day",
+    "field.timezone": "Time zone",
+    "help.timezone": "An IANA time zone name, e.g. America/New_York. Defaults to the calendar's own time zone, or UTC.",
+    "field.recurrence_rule": "Repeats",
+    "help.recurrence_rule": "An RFC 5545 RRULE value, e.g. FREQ=WEEKLY;BYDAY=FR. Leave blank for a one-time item.",
+    "field.calendar": "Calendar",
+    "help.calendar": "The calendar to use, by name. Defaults to the member's first calendar, creating one if they have none yet.",
+    "field.attendees": "Attendees",
+    "help.attendees": "A comma-separated list of attendees, e.g. Jane Smith <jane@example.com>, bob@example.com.",
+    "field.due_at": "Due",
+    "field.priority": "Priority",
+    "help.priority": "0-9, where 1 is highest priority and 9 is lowest. Leave blank for no priority.",
+    "field.range_start": "From",
+    "field.range_end": "To",
+    "field.task_status": "Status",
+    "enum.task_status.open": "Open",
+    "enum.task_status.completed": "Completed",
+    "enum.task_status.all": "All",
+    "field.due_before": "Due before",
+    "field.due_after": "Due after"
   },
   "invocation": {
     "base_url": "https://time.elonn.com"
@@ -51,6 +77,133 @@
           "arguments": {
             "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"}
           }
+        },
+        {
+          "id": "time.calendars",
+          "purpose": "Discover the calendars available to the member.",
+          "model_selectable": true,
+          "arguments": {}
+        },
+        {
+          "id": "time.agenda",
+          "purpose": "Show the member's calendar events within a requested time range, expanding recurring events that fall within it.",
+          "model_selectable": true,
+          "arguments": {
+            "start": {"type": "string", "required": true, "source": "model", "label_ref": "field.range_start"},
+            "end": {"type": "string", "required": true, "source": "model", "label_ref": "field.range_end"},
+            "timezone": {"type": "string", "required": false, "source": "model", "default": "UTC", "label_ref": "field.timezone", "help_ref": "help.timezone"}
+          }
+        },
+        {
+          "id": "time.tasks",
+          "purpose": "Show the member's tasks, optionally filtered by status and due date.",
+          "model_selectable": true,
+          "arguments": {
+            "status": {
+              "type": "string", "required": false, "source": "model", "default": "open",
+              "enum": ["open", "completed", "all"],
+              "label_ref": "field.task_status",
+              "enum_label_refs": {"open": "enum.task_status.open", "completed": "enum.task_status.completed", "all": "enum.task_status.all"}
+            },
+            "due_before": {"type": "string", "required": false, "source": "model", "label_ref": "field.due_before"},
+            "due_after": {"type": "string", "required": false, "source": "model", "label_ref": "field.due_after"}
+          }
+        },
+        {
+          "id": "time.event.create",
+          "purpose": "Create a new calendar event.",
+          "model_selectable": true,
+          "arguments": {
+            "title": {"type": "string", "required": true, "source": "model", "label_ref": "field.title"},
+            "starts_at": {"type": "string", "required": true, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
+            "ends_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.ends_at"},
+            "all_day": {"type": "boolean", "required": false, "source": "model", "default": false, "label_ref": "field.all_day"},
+            "timezone": {"type": "string", "required": false, "source": "model", "label_ref": "field.timezone", "help_ref": "help.timezone"},
+            "location": {"type": "string", "required": false, "source": "model", "label_ref": "field.location"},
+            "description": {"type": "string", "required": false, "source": "model", "label_ref": "field.description"},
+            "recurrence_rule": {"type": "string", "required": false, "source": "model", "label_ref": "field.recurrence_rule", "help_ref": "help.recurrence_rule"},
+            "calendar": {"type": "string", "required": false, "source": "model", "label_ref": "field.calendar", "help_ref": "help.calendar"},
+            "attendees": {"type": "string", "required": false, "source": "model", "label_ref": "field.attendees", "help_ref": "help.attendees"}
+          }
+        },
+        {
+          "id": "time.event.update",
+          "purpose": "Update an existing calendar event already identified by a prior Dataset action.",
+          "model_selectable": false,
+          "arguments": {
+            "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"},
+            "title": {"type": "string", "required": false, "source": "model", "label_ref": "field.title"},
+            "starts_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
+            "ends_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.ends_at"},
+            "all_day": {"type": "boolean", "required": false, "source": "model", "label_ref": "field.all_day"},
+            "timezone": {"type": "string", "required": false, "source": "model", "label_ref": "field.timezone", "help_ref": "help.timezone"},
+            "location": {"type": "string", "required": false, "source": "model", "label_ref": "field.location"},
+            "description": {"type": "string", "required": false, "source": "model", "label_ref": "field.description"},
+            "recurrence_rule": {"type": "string", "required": false, "source": "model", "label_ref": "field.recurrence_rule", "help_ref": "help.recurrence_rule"},
+            "calendar": {"type": "string", "required": false, "source": "model", "label_ref": "field.calendar", "help_ref": "help.calendar"},
+            "attendees": {"type": "string", "required": false, "source": "model", "label_ref": "field.attendees", "help_ref": "help.attendees"}
+          }
+        },
+        {
+          "id": "time.event.delete",
+          "purpose": "Delete an existing calendar event already identified by a prior Dataset action.",
+          "model_selectable": false,
+          "arguments": {
+            "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"}
+          }
+        },
+        {
+          "id": "time.task.create",
+          "purpose": "Create a new task.",
+          "model_selectable": true,
+          "arguments": {
+            "title": {"type": "string", "required": true, "source": "model", "label_ref": "field.title"},
+            "description": {"type": "string", "required": false, "source": "model", "label_ref": "field.description"},
+            "due_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.due_at"},
+            "starts_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
+            "priority": {"type": "integer", "required": false, "source": "model", "label_ref": "field.priority", "help_ref": "help.priority"},
+            "recurrence_rule": {"type": "string", "required": false, "source": "model", "label_ref": "field.recurrence_rule", "help_ref": "help.recurrence_rule"},
+            "calendar": {"type": "string", "required": false, "source": "model", "label_ref": "field.calendar", "help_ref": "help.calendar"}
+          }
+        },
+        {
+          "id": "time.task.update",
+          "purpose": "Update an existing task already identified by a prior Dataset action.",
+          "model_selectable": false,
+          "arguments": {
+            "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"},
+            "title": {"type": "string", "required": false, "source": "model", "label_ref": "field.title"},
+            "description": {"type": "string", "required": false, "source": "model", "label_ref": "field.description"},
+            "due_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.due_at"},
+            "starts_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
+            "priority": {"type": "integer", "required": false, "source": "model", "label_ref": "field.priority", "help_ref": "help.priority"},
+            "recurrence_rule": {"type": "string", "required": false, "source": "model", "label_ref": "field.recurrence_rule", "help_ref": "help.recurrence_rule"},
+            "calendar": {"type": "string", "required": false, "source": "model", "label_ref": "field.calendar", "help_ref": "help.calendar"}
+          }
+        },
+        {
+          "id": "time.task.complete",
+          "purpose": "Mark an existing task, already identified by a prior Dataset action, complete.",
+          "model_selectable": false,
+          "arguments": {
+            "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"}
+          }
+        },
+        {
+          "id": "time.task.reopen",
+          "purpose": "Reopen an existing completed task already identified by a prior Dataset action.",
+          "model_selectable": false,
+          "arguments": {
+            "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"}
+          }
+        },
+        {
+          "id": "time.task.delete",
+          "purpose": "Delete an existing task already identified by a prior Dataset action.",
+          "model_selectable": false,
+          "arguments": {
+            "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"}
+          }
         }
       ],
       "request": {
@@ -63,7 +216,7 @@
         "conductor.elonn",
         "mind.elonn"
       ],
-      "side_effects": false,
+      "side_effects": true,
       "privacy": [
         "Calendar object access is scoped to the authenticated member identity supplied by the calling platform service -- every query filters by identity_user_id, no cross-member visibility exists."
       ],
@@ -72,6 +225,11 @@
         "time.member_required",
         "time.unsupported_operation",
         "time.invalid_search_call",
+        "time.invalid_event_call",
+        "time.invalid_task_call",
+        "time.calendar_not_found",
+        "time.forbidden_mutation",
+        "time.validation_failed",
         "time.object_not_found"
       ]
     }
@@ -83,7 +241,8 @@
     ],
     "service": [
       "time.calendar_event object",
-      "time.task object"
+      "time.task object",
+      "time.calendar object"
     ]
   },
   "errors": [
@@ -106,6 +265,31 @@
       "code": "time.invalid_search_call",
       "class": "invalid_call",
       "message": "Time search requires text."
+    },
+    {
+      "code": "time.invalid_event_call",
+      "class": "invalid_call",
+      "message": "Time event operation received invalid or missing arguments."
+    },
+    {
+      "code": "time.invalid_task_call",
+      "class": "invalid_call",
+      "message": "Time task operation received invalid or missing arguments."
+    },
+    {
+      "code": "time.calendar_not_found",
+      "class": "not_found",
+      "message": "The requested calendar was not found."
+    },
+    {
+      "code": "time.forbidden_mutation",
+      "class": "forbidden",
+      "message": "This calendar object is owned by another service and cannot be changed here."
+    },
+    {
+      "code": "time.validation_failed",
+      "class": "invalid_call",
+      "message": "The supplied fields could not be saved."
     },
     {
       "code": "time.object_not_found",
