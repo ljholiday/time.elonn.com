@@ -6,8 +6,8 @@
     "purpose": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar objects. Does not own Social events (social.event, owned by social.elonn) -- Social events synced into a member's calendar arrive here only as ingested calendar objects with a source reference back to Social."
   },
   "contract": {
-    "revision": 6,
-    "published": "2026-09-18T00:00:00Z"
+    "revision": 7,
+    "published": "2026-09-16T21:08:19Z"
   },
   "labels": {
     "field.search_text": "Search",
@@ -192,8 +192,8 @@
           "model_selectable": true,
           "arguments": {
             "title": {"type": "string", "required": true, "source": "model", "label_ref": "field.title"},
-            "starts_at": {"type": "string", "required": true, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
-            "ends_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.ends_at"},
+            "starts_at": {"type": "datetime", "required": true, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
+            "ends_at": {"type": "datetime", "required": false, "source": "model", "label_ref": "field.ends_at"},
             "all_day": {"type": "boolean", "required": false, "source": "model", "default": false, "label_ref": "field.all_day"},
             "timezone": {"type": "string", "required": false, "source": "model", "label_ref": "field.timezone", "help_ref": "help.timezone"},
             "location": {"type": "string", "required": false, "source": "model", "label_ref": "field.location"},
@@ -210,8 +210,8 @@
           "arguments": {
             "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"},
             "title": {"type": "string", "required": false, "source": "model", "label_ref": "field.title"},
-            "starts_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
-            "ends_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.ends_at"},
+            "starts_at": {"type": "datetime", "required": false, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
+            "ends_at": {"type": "datetime", "required": false, "source": "model", "label_ref": "field.ends_at"},
             "all_day": {"type": "boolean", "required": false, "source": "model", "label_ref": "field.all_day"},
             "timezone": {"type": "string", "required": false, "source": "model", "label_ref": "field.timezone", "help_ref": "help.timezone"},
             "location": {"type": "string", "required": false, "source": "model", "label_ref": "field.location"},
@@ -236,8 +236,8 @@
           "arguments": {
             "title": {"type": "string", "required": true, "source": "model", "label_ref": "field.title"},
             "description": {"type": "string", "required": false, "source": "model", "label_ref": "field.description"},
-            "due_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.due_at"},
-            "starts_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
+            "due_at": {"type": "datetime", "required": false, "source": "model", "label_ref": "field.due_at"},
+            "starts_at": {"type": "datetime", "required": false, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
             "priority": {"type": "integer", "required": false, "source": "model", "label_ref": "field.priority", "help_ref": "help.priority"},
             "recurrence_rule": {"type": "string", "required": false, "source": "model", "label_ref": "field.recurrence_rule", "help_ref": "help.recurrence_rule"},
             "calendar": {"type": "string", "required": false, "source": "model", "label_ref": "field.calendar", "help_ref": "help.calendar"}
@@ -251,8 +251,8 @@
             "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"},
             "title": {"type": "string", "required": false, "source": "model", "label_ref": "field.title"},
             "description": {"type": "string", "required": false, "source": "model", "label_ref": "field.description"},
-            "due_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.due_at"},
-            "starts_at": {"type": "string", "required": false, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
+            "due_at": {"type": "datetime", "required": false, "source": "model", "label_ref": "field.due_at"},
+            "starts_at": {"type": "datetime", "required": false, "source": "model", "label_ref": "field.starts_at", "help_ref": "help.starts_at"},
             "priority": {"type": "integer", "required": false, "source": "model", "label_ref": "field.priority", "help_ref": "help.priority"},
             "recurrence_rule": {"type": "string", "required": false, "source": "model", "label_ref": "field.recurrence_rule", "help_ref": "help.recurrence_rule"},
             "calendar": {"type": "string", "required": false, "source": "model", "label_ref": "field.calendar", "help_ref": "help.calendar"}
