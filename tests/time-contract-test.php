@@ -88,6 +88,38 @@ $checks = [
         && str_contains($public, 'function timeAgendaObjects(')
         && str_contains($public, 'function timeTaskObjects(')
         && str_contains($public, 'resolveCalendarId('),
+    'Every declared entrypoint resolves to a real, model_selectable Contract operation' =>
+        (static function (array $contract, array $contractOperationIds): bool {
+            $entrypoints = $contract['entrypoints'] ?? [];
+            if ($entrypoints === []) {
+                return false;
+            }
+            $operations = [];
+            foreach (($contract['endpoints'] ?? []) as $endpoint) {
+                foreach (($endpoint['operations'] ?? []) as $operation) {
+                    $operations[(string) ($operation['id'] ?? '')] = $operation;
+                }
+            }
+            foreach ($entrypoints as $entrypoint) {
+                $operationId = (string) ($entrypoint['operation'] ?? '');
+                if (trim((string) ($entrypoint['id'] ?? '')) === ''
+                    || trim((string) ($entrypoint['label'] ?? '')) === ''
+                    || !array_key_exists($operationId, $operations)
+                    || ($operations[$operationId]['model_selectable'] ?? true) !== true) {
+                    return false;
+                }
+            }
+            return true;
+        })($contract, $contractOperationIds),
+    'time.search and time.list deliberately have no dashboard entrypoint of their own' =>
+        (static function (array $contract): bool {
+            foreach (($contract['entrypoints'] ?? []) as $entrypoint) {
+                if (in_array($entrypoint['operation'] ?? '', ['time.search', 'time.list'], true)) {
+                    return false;
+                }
+            }
+            return true;
+        })($contract),
 ];
 
 $failed = 0;

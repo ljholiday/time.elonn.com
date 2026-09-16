@@ -6,8 +6,8 @@
     "purpose": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar objects. Does not own Social events (social.event, owned by social.elonn) -- Social events synced into a member's calendar arrive here only as ingested calendar objects with a source reference back to Social."
   },
   "contract": {
-    "revision": 3,
-    "published": "2026-09-15T00:00:00Z"
+    "revision": 4,
+    "published": "2026-09-16T00:00:00Z"
   },
   "labels": {
     "field.search_text": "Search",
@@ -46,6 +46,60 @@
     "required": true,
     "scheme": "elonn-signed-request"
   },
+  "entrypoints": [
+    {
+      "id": "time.entry.today",
+      "label": "Today",
+      "group": "view",
+      "purpose": "What's on your calendar today.",
+      "operation": "time.agenda",
+      "arguments": {"start": "today", "end": "tomorrow"},
+      "object_types": ["time.calendar_event"],
+      "primary": true
+    },
+    {
+      "id": "time.entry.week",
+      "label": "This week",
+      "group": "view",
+      "purpose": "What's on your calendar over the next 7 days.",
+      "operation": "time.agenda",
+      "arguments": {"start": "today", "end": "+7 days"},
+      "object_types": ["time.calendar_event"]
+    },
+    {
+      "id": "time.entry.tasks",
+      "label": "Tasks",
+      "group": "view",
+      "purpose": "Your open tasks.",
+      "operation": "time.tasks",
+      "arguments": {"status": "open"},
+      "object_types": ["time.task"]
+    },
+    {
+      "id": "time.entry.calendars",
+      "label": "Calendars",
+      "group": "view",
+      "purpose": "The calendars available to you.",
+      "operation": "time.calendars",
+      "object_types": ["time.calendar"]
+    },
+    {
+      "id": "time.entry.new_event",
+      "label": "Add event",
+      "group": "create",
+      "purpose": "Add a new calendar event.",
+      "operation": "time.event.create",
+      "object_types": ["time.calendar_event"]
+    },
+    {
+      "id": "time.entry.new_task",
+      "label": "Add task",
+      "group": "create",
+      "purpose": "Add a new task.",
+      "operation": "time.task.create",
+      "object_types": ["time.task"]
+    }
+  ],
   "endpoints": [
     {
       "id": "time.call",

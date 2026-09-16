@@ -11,8 +11,8 @@ object carrying a `source` reference back to the originating Social event.
 
 - Service id: `time.elonn`
 - Domain: `calendar`
-- Revision: `3`
-- Published: `2026-09-15T00:00:00Z`
+- Revision: `4`
+- Published: `2026-09-16T00:00:00Z`
 - Canonical JSON: `https://time.elonn.com/time.json`
 - Service Publication: `https://time.elonn.com/time-publication.json`
 
@@ -77,6 +77,31 @@ The Call must include:
 - `context`
 
 The `content.operation` value selects the Time operation.
+
+## Entry Points
+
+Time declares six entry points — its meaningful, standalone human entrances, independent of which
+operations are `model_selectable`. **Today** is the primary (default) entrance. `time.search` and
+`time.list` deliberately have no entry point of their own: neither has a preset that means anything
+as a one-tap entrance, and both remain reachable through ordinary free-text Calls. Each entry point
+also carries a `group` — `view` (Today, This week, Tasks, Calendars) or `create` (Add event, Add
+task) — a layout hint a platform orchestrator passes through so a runtime can lay the dashboard out
+as rows (one row per group) instead of one long stack; it is presentation only and does not affect
+invocation.
+
+The **Today** and **This week** presets use the literal relative words `today` / `tomorrow` /
+`+7 days`, not pre-computed dates — Time's own date parsing resolves them fresh against the current
+moment on every request, so these entrances always reflect the real current day regardless of when
+the Contract was published.
+
+| id | label | group | operation | preset arguments |
+|---|---|---|---|---|
+| `time.entry.today` (primary) | Today | `view` | `time.agenda` | `start: today`, `end: tomorrow` |
+| `time.entry.week` | This week | `view` | `time.agenda` | `start: today`, `end: +7 days` |
+| `time.entry.tasks` | Tasks | `view` | `time.tasks` | `status: open` |
+| `time.entry.calendars` | Calendars | `view` | `time.calendars` | — |
+| `time.entry.new_event` | Add event | `create` | `time.event.create` | — |
+| `time.entry.new_task` | Add task | `create` | `time.task.create` | — |
 
 ## Operations
 
