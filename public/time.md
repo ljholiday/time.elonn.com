@@ -11,8 +11,8 @@ object carrying a `source` reference back to the originating Social event.
 
 - Service id: `time.elonn`
 - Domain: `calendar`
-- Revision: `5`
-- Published: `2026-09-17T00:00:00Z`
+- Revision: `6`
+- Published: `2026-09-18T00:00:00Z`
 - Canonical JSON: `https://time.elonn.com/time.json`
 - Service Publication: `https://time.elonn.com/time-publication.json`
 
@@ -169,12 +169,15 @@ a Social-owned mirror calendar, which cannot be deleted from Time.
 ### `time.agenda`
 
 Show calendar events within a requested time range, expanding recurring events that fall within it.
+`timezone` is resolved from the calling Runtime's own context (`context.runtime.timezone`), never asked
+of a Model or the member — a Runtime that supplies none falls back to Time's own UTC default, the same
+as before.
 
 | argument | required | source | default |
 |---|---|---|---|
 | `start` | yes | model | — |
 | `end` | yes | model | — |
-| `timezone` | no | model | `UTC` |
+| `timezone` | no | context (`timezone`) | Time defaults to UTC when the Runtime supplies none |
 
 ### `time.tasks`
 
