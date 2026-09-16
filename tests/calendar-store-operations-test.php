@@ -19,6 +19,7 @@ $config = require BASE_PATH . '/config/config.php';
 
 $pdo = Database::connect($config['database'])->pdo();
 $identityUserId = 'store_ops_test_' . bin2hex(random_bytes(8));
+$socialGuardIdentityUserId = 'store_ops_test_' . bin2hex(random_bytes(8));
 $store = new CalendarStore($pdo);
 $checks = [];
 
@@ -70,9 +71,44 @@ try {
     $store->delete($identityUserId, (int) $event['id']);
     $checks['delete() removes the objects'] = $store->find($identityUserId, (int) $task['id']) === null
         && $store->find($identityUserId, (int) $event['id']) === null;
+
+    $renamed = $store->updateCalendar($identityUserId, $calendarId, ['name' => 'Work', 'color' => '#4285F4']);
+    $checks['updateCalendar() changes only the given fields'] = $renamed['name'] === 'Work'
+        && $renamed['color'] === '#4285F4';
+
+    $untouched = $store->updateCalendar($identityUserId, $calendarId, ['description' => 'Day job']);
+    $checks['updateCalendar() leaves fields not present in $fields unchanged'] = $untouched['name'] === 'Work'
+        && $untouched['color'] === '#4285F4'
+        && $untouched['description'] === 'Day job';
+
+    try {
+        $store->updateCalendar($identityUserId, $calendarId, ['name' => '']);
+        $checks['updateCalendar() rejects an empty name'] = false;
+    } catch (\InvalidArgumentException) {
+        $checks['updateCalendar() rejects an empty name'] = true;
+    }
+
+    $store->deleteCalendar($identityUserId, $calendarId);
+    $checks['deleteCalendar() removes an ordinary calendar'] = !in_array(
+        $calendarId,
+        array_map(static fn (array $c): int => $c['id'], $store->calendars($identityUserId)),
+        true
+    );
+
+    $socialCalendarId = $store->resolveCalendarId($socialGuardIdentityUserId, null);
+    $pdo->prepare('UPDATE time_calendars SET source_service = :source WHERE id = :id')
+        ->execute(['source' => 'social', 'id' => $socialCalendarId]);
+    try {
+        $store->deleteCalendar($socialGuardIdentityUserId, $socialCalendarId);
+        $checks['deleteCalendar() refuses a Social-owned mirror calendar'] = false;
+    } catch (\DomainException) {
+        $checks['deleteCalendar() refuses a Social-owned mirror calendar'] = true;
+    }
 } finally {
-    $pdo->prepare('DELETE FROM time_calendar_objects WHERE identity_user_id = :id')->execute(['id' => $identityUserId]);
-    $pdo->prepare('DELETE FROM time_calendars WHERE identity_user_id = :id')->execute(['id' => $identityUserId]);
+    foreach ([$identityUserId, $socialGuardIdentityUserId] as $cleanupIdentityUserId) {
+        $pdo->prepare('DELETE FROM time_calendar_objects WHERE identity_user_id = :id')->execute(['id' => $cleanupIdentityUserId]);
+        $pdo->prepare('DELETE FROM time_calendars WHERE identity_user_id = :id')->execute(['id' => $cleanupIdentityUserId]);
+    }
 }
 
 $failed = 0;

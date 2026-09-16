@@ -23,6 +23,10 @@
       "description": "Discover the calendars available to the member."
     },
     {
+      "id": "calendar_management",
+      "description": "Update or delete an existing calendar (not the Social mirror calendar, which cannot be deleted from Time)."
+    },
+    {
       "id": "calendar_agenda",
       "description": "Show calendar events within a requested time range, including recurring events."
     },
@@ -42,7 +46,7 @@
   "contract": {
     "json": "https://time.elonn.com/time.json",
     "markdown": "https://time.elonn.com/time.md",
-    "revision": 4
+    "revision": 5
   },
-  "published": "2026-09-16T00:00:00Z"
+  "published": "2026-09-17T00:00:00Z"
 }

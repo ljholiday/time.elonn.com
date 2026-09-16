@@ -268,6 +268,79 @@ final class CalendarStore
     }
 
     /**
+     * Partial update of a calendar's own metadata (not its objects): only the keys present in
+     * $fields change, everything else keeps its current value.
+     *
+     * @param array<string, mixed> $fields
+     * @return array<string, mixed>
+     */
+    public function updateCalendar(string $identityUserId, int $id, array $fields): array
+    {
+        $existing = $this->calendarRow($identityUserId, $id);
+        if ($existing === null) {
+            throw new \RuntimeException('Calendar not found.');
+        }
+
+        $name = array_key_exists('name', $fields) ? trim((string) $fields['name']) : (string) $existing['name'];
+        if ($name === '') {
+            throw new \InvalidArgumentException('name cannot be empty.');
+        }
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE time_calendars
+                SET name = :name, description = :description, color = :color, timezone = :timezone, updated_at = :updated_at
+              WHERE id = :id AND identity_user_id = :identity_user_id'
+        );
+        $stmt->execute([
+            'name' => $name,
+            'description' => array_key_exists('description', $fields) ? $fields['description'] : $existing['description'],
+            'color' => array_key_exists('color', $fields) ? $fields['color'] : $existing['color'],
+            'timezone' => array_key_exists('timezone', $fields) ? $fields['timezone'] : $existing['timezone'],
+            'updated_at' => gmdate('Y-m-d H:i:s'),
+            'id' => $id,
+            'identity_user_id' => $identityUserId,
+        ]);
+
+        return $this->calendarRow($identityUserId, $id) ?? [];
+    }
+
+    /**
+     * Deletes a calendar the member owns. Refuses a Social-owned mirror calendar, mirroring
+     * delete()'s Social-owned guard for individual calendar objects.
+     */
+    public function deleteCalendar(string $identityUserId, int $id): void
+    {
+        $existing = $this->calendarRow($identityUserId, $id);
+        if ($existing === null) {
+            return;
+        }
+        if (($existing['source_service'] ?? null) === 'social') {
+            throw new \DomainException('The Social mirror calendar cannot be deleted from Time.');
+        }
+        $this->pdo->prepare(
+            "UPDATE time_calendars SET status = 'deleted', updated_at = :updated_at WHERE id = :id AND identity_user_id = :identity_user_id"
+        )->execute(['updated_at' => gmdate('Y-m-d H:i:s'), 'id' => $id, 'identity_user_id' => $identityUserId]);
+    }
+
+    /** @return array<string, mixed>|null */
+    private function calendarRow(string $identityUserId, int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, uri, name, description, color, timezone, components, source_service, source_object_type, source_object_id
+             FROM time_calendars WHERE id = :id AND identity_user_id = :identity_user_id AND status = \'active\''
+        );
+        $stmt->execute(['id' => $id, 'identity_user_id' => $identityUserId]);
+        $row = $stmt->fetch();
+        if (!is_array($row)) {
+            return null;
+        }
+        $row['id'] = (int) $row['id'];
+        $row['editable_fields'] = ['name', 'description', 'color', 'timezone'];
+        $row['deletable'] = ($row['source_service'] ?? null) !== 'social';
+        return $row;
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
     private function objectsInRange(

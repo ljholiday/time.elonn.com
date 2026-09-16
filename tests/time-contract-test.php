@@ -54,14 +54,14 @@ $checks = [
         && !str_contains($public, "'{$runtimePanelRoute}'")
         && !str_contains($public, $worldPanelRoute)
         && !str_contains($public, 'runtimePanel('),
-    'Contract declares the full event/task Conductor operation surface' => $contractOperationIds === [
-        'time.search', 'time.list', 'time.open', 'time.calendars', 'time.agenda', 'time.tasks',
+    'Contract declares the full event/task/calendar Conductor operation surface' => $contractOperationIds === [
+        'time.search', 'time.list', 'time.open', 'time.calendars', 'time.calendar.update', 'time.calendar.delete', 'time.agenda', 'time.tasks',
         'time.event.create', 'time.event.update', 'time.event.delete',
         'time.task.create', 'time.task.update', 'time.task.complete', 'time.task.reopen', 'time.task.delete',
     ],
     'Every mutating operation targeting an existing object is object_id/context sourced, never model-guessed' =>
         (static function (array $contract): bool {
-            $mutatingExisting = ['time.event.update', 'time.event.delete', 'time.task.update', 'time.task.complete', 'time.task.reopen', 'time.task.delete'];
+            $mutatingExisting = ['time.event.update', 'time.event.delete', 'time.task.update', 'time.task.complete', 'time.task.reopen', 'time.task.delete', 'time.calendar.update', 'time.calendar.delete'];
             foreach (($contract['endpoints'] ?? []) as $endpoint) {
                 foreach (($endpoint['operations'] ?? []) as $operation) {
                     if (!in_array($operation['id'] ?? '', $mutatingExisting, true)) {
@@ -85,9 +85,18 @@ $checks = [
         && str_contains($public, "'time.task.complete'")
         && str_contains($public, "'time.task.reopen'")
         && str_contains($public, "'time.task.delete'")
+        && str_contains($public, "'time.calendar.update'")
+        && str_contains($public, "'time.calendar.delete'")
         && str_contains($public, 'function timeAgendaObjects(')
         && str_contains($public, 'function timeTaskObjects(')
         && str_contains($public, 'resolveCalendarId('),
+    'Every Time calendar carries a real Edit action, and Delete only when deletable' =>
+        str_contains($public, 'function timeCalendarObjectActions(')
+        && str_contains($public, "'operation' => 'time.calendar.update'")
+        && str_contains($public, "'operation' => 'time.calendar.delete'")
+        && str_contains($store, 'function updateCalendar(')
+        && str_contains($store, 'function deleteCalendar(')
+        && str_contains($store, 'The Social mirror calendar cannot be deleted from Time.'),
     'Every declared entrypoint resolves to a real, model_selectable Contract operation' =>
         (static function (array $contract, array $contractOperationIds): bool {
             $entrypoints = $contract['entrypoints'] ?? [];

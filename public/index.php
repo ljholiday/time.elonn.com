@@ -167,6 +167,55 @@ $router->post('/time/call', static function () use ($config): void {
         return;
     }
 
+    if ($operation === 'time.calendar.update' || $operation === 'time.calendar.delete') {
+        $calendarId = timeCalendarIdFrom($content['object_id'] ?? null);
+        if ($calendarId === null) {
+            timeServiceDatasetError('time.object_not_found', 'not_found', 'Time calendar was not found.', 404, $caller['service']);
+            return;
+        }
+        $store = new CalendarStore($pdo);
+
+        if ($operation === 'time.calendar.delete') {
+            try {
+                $store->deleteCalendar($memberId, $calendarId);
+            } catch (\DomainException $domainException) {
+                timeServiceDatasetError('time.forbidden_mutation', 'forbidden', $domainException->getMessage(), 403, $caller['service']);
+                return;
+            }
+            Response::json(timeCalendarsDataset($store->calendars($memberId), $caller['service']));
+            return;
+        }
+
+        $timezoneName = cleanOptionalString($content['timezone'] ?? null);
+        if ($timezoneName !== null && validTimezone($timezoneName) === null) {
+            timeServiceDatasetError('time.invalid_calendar_call', 'invalid_call', 'timezone is not valid.', 422, $caller['service']);
+            return;
+        }
+        $fields = [];
+        if (array_key_exists('name', $content)) {
+            $fields['name'] = (string) $content['name'];
+        }
+        foreach (['description', 'color'] as $key) {
+            if (array_key_exists($key, $content)) {
+                $fields[$key] = cleanOptionalString($content[$key]);
+            }
+        }
+        if ($timezoneName !== null) {
+            $fields['timezone'] = $timezoneName;
+        }
+        try {
+            $store->updateCalendar($memberId, $calendarId, $fields);
+        } catch (\RuntimeException $runtimeException) {
+            timeServiceDatasetError('time.object_not_found', 'not_found', $runtimeException->getMessage(), 404, $caller['service']);
+            return;
+        } catch (\InvalidArgumentException $invalidArgumentException) {
+            timeServiceDatasetError('time.invalid_calendar_call', 'invalid_call', $invalidArgumentException->getMessage(), 422, $caller['service']);
+            return;
+        }
+        Response::json(timeCalendarsDataset($store->calendars($memberId), $caller['service']));
+        return;
+    }
+
     if ($operation === 'time.agenda') {
         $timezoneName = cleanOptionalString($content['timezone'] ?? null) ?? 'UTC';
         if (validTimezone($timezoneName) === null) {
@@ -1362,6 +1411,13 @@ function timeCalendarObjectIdFrom(mixed $objectId): ?int
     return $parts[0] === 'time.calendar_object' ? positiveInt($parts[1] ?? null) : null;
 }
 
+/** A Dataset action's object_id is always "time.calendar:<numeric id>" -- parse that back out. */
+function timeCalendarIdFrom(mixed $objectId): ?int
+{
+    $parts = explode(':', trim((string) $objectId), 2);
+    return $parts[0] === 'time.calendar' ? positiveInt($parts[1] ?? null) : null;
+}
+
 function timeParseDateTime(mixed $value, ?string $timezone): ?DateTimeImmutable
 {
     $text = trim((string) $value);
@@ -1587,6 +1643,38 @@ function timeTaskObjects(PDO $pdo, string $memberId, string $status, ?DateTimeIm
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+/**
+ * The real actions every Time calendar carries: Edit is always offered (renaming, recoloring, or
+ * re-timezoning a Social mirror calendar is still the member's own local preference); Delete is
+ * withheld for a Social-owned mirror calendar, which CalendarStore::deleteCalendar() refuses
+ * server-side -- withholding the action here just keeps the Dashboard from offering one that
+ * would fail.
+ *
+ * @return array<int, array<string, mixed>>
+ */
+function timeCalendarObjectActions(string $id, array $calendar): array
+{
+    $actions = [[
+        'id' => 'update_calendar',
+        'type' => 'update_object',
+        'label' => 'Edit',
+        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.calendar.update', 'object_id' => $id, 'payload' => []],
+        'availability' => 'enabled',
+    ]];
+
+    if (($calendar['deletable'] ?? true) === true) {
+        $actions[] = [
+            'id' => 'delete_calendar',
+            'type' => 'delete_object',
+            'label' => 'Delete',
+            'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.calendar.delete', 'object_id' => $id, 'payload' => []],
+            'availability' => 'enabled',
+        ];
+    }
+
+    return $actions;
+}
+
 /** @param array<int, array<string, mixed>> $calendar @return array<string, mixed> */
 function timeCalendarObject(array $calendar): array
 {
@@ -1604,9 +1692,9 @@ function timeCalendarObject(array $calendar): array
             'components' => (string) ($calendar['components'] ?? ''),
             'source' => ($calendar['source_service'] ?? null) === null ? null : ['service' => (string) $calendar['source_service']],
         ],
-        'permissions' => ['can_view' => true, 'can_act' => false, 'can_share' => false],
+        'permissions' => ['can_view' => true, 'can_act' => true, 'can_share' => false],
         'resources' => [],
-        'actions' => ['local' => [], 'inbound' => [], 'outbound' => []],
+        'actions' => ['local' => timeCalendarObjectActions($id, $calendar), 'inbound' => [], 'outbound' => []],
         'relationships' => [],
         'metadata' => ['service' => 'time', 'source_id' => (string) $calendar['id']],
     ];
@@ -1626,7 +1714,7 @@ function timeCalendarsDataset(array $calendars, string $caller): array
         'mode' => 'snapshot',
         'created' => gmdate('c'),
         'objects' => $objects,
-        'actions' => [],
+        'actions' => timeDatasetActions($objects),
         'relationships' => [],
         'collections' => count($objects) !== 1 ? [[
             'id' => $collectionId,

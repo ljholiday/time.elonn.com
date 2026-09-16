@@ -6,8 +6,8 @@
     "purpose": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar objects. Does not own Social events (social.event, owned by social.elonn) -- Social events synced into a member's calendar arrive here only as ingested calendar objects with a source reference back to Social."
   },
   "contract": {
-    "revision": 4,
-    "published": "2026-09-16T00:00:00Z"
+    "revision": 5,
+    "published": "2026-09-17T00:00:00Z"
   },
   "labels": {
     "field.search_text": "Search",
@@ -15,6 +15,9 @@
     "field.title": "Title",
     "field.description": "Description",
     "field.location": "Location",
+    "field.calendar_name": "Name",
+    "field.color": "Color",
+    "help.color": "A CSS color name or hex code, e.g. #4285F4.",
     "field.starts_at": "Starts",
     "help.starts_at": "An ISO 8601 date/time, e.g. 2026-09-18T12:00:00-04:00.",
     "field.ends_at": "Ends",
@@ -137,6 +140,26 @@
           "purpose": "Discover the calendars available to the member.",
           "model_selectable": true,
           "arguments": {}
+        },
+        {
+          "id": "time.calendar.update",
+          "purpose": "Update an existing calendar's name, description, color, or time zone.",
+          "model_selectable": false,
+          "arguments": {
+            "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"},
+            "name": {"type": "string", "required": false, "source": "model", "label_ref": "field.calendar_name"},
+            "description": {"type": "string", "required": false, "source": "model", "label_ref": "field.description"},
+            "color": {"type": "string", "required": false, "source": "model", "label_ref": "field.color", "help_ref": "help.color"},
+            "timezone": {"type": "string", "required": false, "source": "model", "label_ref": "field.timezone", "help_ref": "help.timezone"}
+          }
+        },
+        {
+          "id": "time.calendar.delete",
+          "purpose": "Delete an existing calendar the member owns. Refuses a Social-owned mirror calendar, which cannot be deleted from Time.",
+          "model_selectable": false,
+          "arguments": {
+            "object_id": {"type": "string", "required": true, "source": "context", "context_key": "object_id"}
+          }
         },
         {
           "id": "time.agenda",

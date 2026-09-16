@@ -11,8 +11,8 @@ object carrying a `source` reference back to the originating Social event.
 
 - Service id: `time.elonn`
 - Domain: `calendar`
-- Revision: `4`
-- Published: `2026-09-16T00:00:00Z`
+- Revision: `5`
+- Published: `2026-09-17T00:00:00Z`
 - Canonical JSON: `https://time.elonn.com/time.json`
 - Service Publication: `https://time.elonn.com/time-publication.json`
 
@@ -143,6 +143,28 @@ Open a single calendar object already identified by a prior Dataset action's `ob
 ### `time.calendars`
 
 Discover the calendars available to the member. Takes no arguments.
+
+### `time.calendar.update` — not Model-selectable
+
+Update an existing calendar's name, description, color, or time zone, identified by a prior Dataset
+action's `object_id`. Every field but `object_id` is optional -- an omitted field keeps its current value.
+
+| argument | required | source |
+|---|---|---|
+| `object_id` | yes | context (`object_id`) |
+| `name` | no | model |
+| `description` | no | model |
+| `color` | no | model |
+| `timezone` | no | model |
+
+### `time.calendar.delete` — not Model-selectable
+
+Delete an existing calendar the member owns, identified by a prior Dataset action's `object_id`. Refuses
+a Social-owned mirror calendar, which cannot be deleted from Time.
+
+| argument | required | source |
+|---|---|---|
+| `object_id` | yes | context (`object_id`) |
 
 ### `time.agenda`
 
