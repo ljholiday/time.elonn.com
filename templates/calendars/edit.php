@@ -4,6 +4,7 @@ $error = $data['error'] ?? null;
 $calendar = is_array($data['calendar'] ?? null) ? $data['calendar'] : null;
 $old = is_array($data['old'] ?? null) ? $data['old'] : [];
 $sourceService = (string) ($calendar['source_service'] ?? '');
+$status = (string) ($calendar['status'] ?? 'active');
 ?>
 <section class="time-header">
     <div>
@@ -22,7 +23,10 @@ $sourceService = (string) ($calendar['source_service'] ?? '');
             <p class="time-error"><?= html($error) ?></p>
         <?php endif; ?>
         <?php if ($sourceService !== ''): ?>
-            <p class="time-notice">This calendar mirrors <?= html($sourceService) ?>. It can be renamed locally, but its status stays active and deletion is disabled.</p>
+            <p class="time-notice">This calendar mirrors <?= html($sourceService) ?>. It can be renamed locally, but deletion is disabled.</p>
+        <?php endif; ?>
+        <?php if ($status === 'archived'): ?>
+            <p class="time-notice">This calendar is archived. It's hidden from the Planner, Dashboard, and CalDAV sync until you unarchive it.</p>
         <?php endif; ?>
         <label>
             Name
@@ -40,18 +44,6 @@ $sourceService = (string) ($calendar['source_service'] ?? '');
             Timezone
             <input name="timezone" list="timezones" placeholder="America/Los_Angeles" value="<?= html((string) ($old['timezone'] ?? '')) ?>">
         </label>
-        <?php if ($sourceService === ''): ?>
-            <label>
-                Status
-                <select name="status">
-                    <?php foreach (['active' => 'Active', 'archived' => 'Archived'] as $value => $label): ?>
-                        <option value="<?= html($value) ?>" <?= (string) ($old['status'] ?? 'active') === $value ? 'selected' : '' ?>>
-                            <?= html($label) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </label>
-        <?php endif; ?>
         <datalist id="timezones">
             <option value="America/Los_Angeles"></option>
             <option value="America/Denver"></option>
@@ -64,6 +56,18 @@ $sourceService = (string) ($calendar['source_service'] ?? '');
             <a class="button button-secondary" href="/calendars">Cancel</a>
         </div>
     </form>
+
+    <div class="time-form-actions">
+        <?php if ($status === 'archived'): ?>
+            <form method="post" action="/calendars/<?= (int) $calendar['id'] ?>/unarchive">
+                <button class="button button-secondary" type="submit">Unarchive calendar</button>
+            </form>
+        <?php else: ?>
+            <form method="post" action="/calendars/<?= (int) $calendar['id'] ?>/archive">
+                <button class="button button-secondary" type="submit">Archive calendar</button>
+            </form>
+        <?php endif; ?>
+    </div>
 
     <?php if ($sourceService === ''): ?>
         <form class="time-danger-zone" method="post" action="/calendars/<?= (int) $calendar['id'] ?>/delete">

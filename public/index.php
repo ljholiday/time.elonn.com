@@ -962,23 +962,11 @@ $router->post('/calendars/{id}/edit', static function (array $params) use ($conf
 
     $input = requestInput();
     $name = cleanString($input['name'] ?? null);
-    $status = ($calendar['source_service'] ?? null) === 'social'
-        ? (string) $calendar['status']
-        : cleanString($input['status'] ?? null) ?? (string) $calendar['status'];
-    $old = formOld($input, ['name', 'description', 'color', 'timezone', 'status']);
+    $old = formOld($input, ['name', 'description', 'color', 'timezone']);
 
     if ($name === null) {
         renderApp('Edit calendar', 'calendars/edit.php', $identity, [
             'error' => 'Calendar name is required.',
-            'calendar' => $calendar,
-            'old' => $old,
-        ], 400);
-        return;
-    }
-
-    if (!in_array($status, ['active', 'archived'], true)) {
-        renderApp('Edit calendar', 'calendars/edit.php', $identity, [
-            'error' => 'Calendar status must be active or archived.',
             'calendar' => $calendar,
             'old' => $old,
         ], 400);
@@ -990,7 +978,57 @@ $router->post('/calendars/{id}/edit', static function (array $params) use ($conf
         'description' => cleanOptionalString($input['description'] ?? null),
         'color' => cleanOptionalString($input['color'] ?? null),
         'timezone' => cleanOptionalString($input['timezone'] ?? null),
-        'status' => $status,
+        'status' => (string) $calendar['status'],
+    ]);
+
+    redirect('/calendars');
+});
+
+$router->post('/calendars/{id}/archive', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $calendarId = positiveInt($params['id'] ?? null);
+    $calendar = findCalendar($pdo, $identity['id'], $calendarId);
+    if ($calendar === null) {
+        Response::json(['error' => 'Calendar not found.'], 404);
+        return;
+    }
+
+    updateCalendar($pdo, $identity['id'], $calendarId, [
+        'name' => (string) $calendar['name'],
+        'description' => $calendar['description'],
+        'color' => $calendar['color'],
+        'timezone' => $calendar['timezone'],
+        'status' => 'archived',
+    ]);
+
+    redirect('/calendars');
+});
+
+$router->post('/calendars/{id}/unarchive', static function (array $params) use ($config, $apiBaseUrl): void {
+    $identity = requireIdentity($apiBaseUrl);
+    if ($identity === null) {
+        return;
+    }
+
+    $pdo = timePdo($config);
+    $calendarId = positiveInt($params['id'] ?? null);
+    $calendar = findCalendar($pdo, $identity['id'], $calendarId);
+    if ($calendar === null) {
+        Response::json(['error' => 'Calendar not found.'], 404);
+        return;
+    }
+
+    updateCalendar($pdo, $identity['id'], $calendarId, [
+        'name' => (string) $calendar['name'],
+        'description' => $calendar['description'],
+        'color' => $calendar['color'],
+        'timezone' => $calendar['timezone'],
+        'status' => 'active',
     ]);
 
     redirect('/calendars');
@@ -1046,9 +1084,7 @@ $router->patch('/calendars/{id}', static function (array $params) use ($config, 
     $description = array_key_exists('description', $input) ? cleanOptionalString($input['description']) : $calendar['description'];
     $color = array_key_exists('color', $input) ? cleanOptionalString($input['color']) : $calendar['color'];
     $timezone = array_key_exists('timezone', $input) ? cleanOptionalString($input['timezone']) : $calendar['timezone'];
-    $status = ($calendar['source_service'] ?? null) === 'social'
-        ? (string) $calendar['status']
-        : (array_key_exists('status', $input) ? cleanString($input['status']) : (string) $calendar['status']);
+    $status = array_key_exists('status', $input) ? cleanString($input['status']) : (string) $calendar['status'];
     if (!in_array($status, ['active', 'archived'], true)) {
         Response::json(['error' => 'Calendar status must be active or archived.'], 400);
         return;
@@ -2441,7 +2477,6 @@ function calendarFormOld(array $calendar): array
         'description' => (string) ($calendar['description'] ?? ''),
         'color' => (string) ($calendar['color'] ?? ''),
         'timezone' => (string) ($calendar['timezone'] ?? ''),
-        'status' => (string) ($calendar['status'] ?? 'active'),
     ];
 }
 
