@@ -2224,7 +2224,7 @@ function requireIdentity(string $apiBaseUrl): ?array
     $token = bearerToken() ?? cookieToken();
     if ($token === null) {
         if (isBrowserRequest()) {
-            redirect(accountLoginUrl());
+            redirect(accountLoginUrl($apiBaseUrl));
             return null;
         }
 
@@ -2241,7 +2241,7 @@ function requireIdentity(string $apiBaseUrl): ?array
 
     if ($identity === null) {
         if (isBrowserRequest()) {
-            redirect(accountLoginUrl());
+            redirect(accountLoginUrl($apiBaseUrl));
             return null;
         }
 
@@ -2781,14 +2781,9 @@ function timeHttpsRedirectTarget(string $canonicalUrl): ?string
     return $canonical === '' ? null : $canonical . $path;
 }
 
-function accountLoginUrl(): string
+function accountLoginUrl(string $apiBaseUrl): string
 {
-    $host = $_SERVER['HTTP_HOST'] ?? '';
-    $loginUrl = str_contains((string) $host, 'elonn.local')
-        ? currentScheme() . '://elonn.local/account/login'
-        : 'https://elonn.com/account/login';
-
-    return $loginUrl . '?return_to=' . rawurlencode(currentUrl());
+    return rtrim($apiBaseUrl, '/') . '/identity/login?return_to=' . rawurlencode(currentUrl());
 }
 
 function currentScheme(): string

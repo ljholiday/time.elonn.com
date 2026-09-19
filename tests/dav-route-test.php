@@ -27,6 +27,11 @@ $checks = [
         str_contains($index, 'timeHttpsRedirectTarget')
         && str_contains($index, "'time.elonn.local', 'time.elonn.com'")
         && !str_contains($index, "header('Location: https://' . \$host"),
+    'Browser authentication uses the configured API identity login' =>
+        str_contains($index, 'accountLoginUrl(string $apiBaseUrl)')
+        && str_contains($index, "'/identity/login?return_to='")
+        && !str_contains($index, 'elonn.com/account/login')
+        && !str_contains($index, 'elonn.local/account/login'),
 ];
 
 $failed = 0;
