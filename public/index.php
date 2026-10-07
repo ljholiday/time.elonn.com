@@ -110,6 +110,56 @@ $router->get('/metrics', static function () use ($config): void {
     ]);
 });
 
+/*
+ * canonical/administrative-interface.json: Time's own administrative status and capability
+ * baseline, for Admin's observation only. configuration.mutable, diagnostics, and
+ * control.{restart,drain} are honestly reported as unavailable -- Time implements none of them
+ * yet.
+ */
+$router->get('/administrative-interface', static function () use ($config): void {
+    if ((timeServiceCaller($config, 'GET', '/administrative-interface', '')['service'] ?? '') !== 'admin.elonn') {
+        timeMetricsAuthFailed();
+        return;
+    }
+
+    $checks = [];
+    $healthy = true;
+    try {
+        timePdo($config)->query('SELECT 1');
+        $checks[] = ['name' => 'database', 'state' => 'healthy', 'detail' => 'Connection and SELECT 1 succeeded.'];
+    } catch (Throwable $throwable) {
+        $healthy = false;
+        $checks[] = ['name' => 'database', 'state' => 'unhealthy', 'detail' => $throwable->getMessage()];
+    }
+
+    Response::json([
+        'component' => 'time.elonn',
+        'component_version' => '7',
+        'deployment_id' => '',
+        'status' => $healthy ? 'running' : 'degraded',
+        'health' => [
+            'state' => $healthy ? 'healthy' : 'unhealthy',
+            'checks' => $checks,
+        ],
+        'configuration' => [
+            'inspectable' => [
+                'database.name' => (string) ($config['database']['name'] ?? ''),
+                'services.api_base_url' => (string) ($config['services']['api_base_url'] ?? ''),
+                'services.social_base_url' => (string) ($config['services']['social_base_url'] ?? ''),
+            ],
+            'mutable' => [],
+        ],
+        'maintenance' => ['state' => 'normal', 'reason' => ''],
+        'diagnostics' => ['available' => []],
+        'control' => [
+            'restart' => ['state' => 'unavailable', 'reason' => 'Time does not implement an administrative restart operation.'],
+            'drain' => ['state' => 'unavailable', 'reason' => 'Time does not implement an administrative drain operation.'],
+        ],
+        'observed_at' => gmdate('Y-m-d\TH:i:s\Z'),
+        'metadata' => (object) [],
+    ]);
+});
+
 $router->post('/time/call', static function () use ($config): void {
     $rawBody = (string) file_get_contents('php://input');
     $caller = timeServiceCaller($config, 'POST', '/time/call', $rawBody);
