@@ -132,12 +132,15 @@ $checks = [
     'time.calendar objects declare name (real data) with title blank, and description (real data) with summary blank -- never copied across' =>
         str_contains($public, "'title' => '',\n        'name' => (string) \$calendar['name'],\n        'summary' => '',\n        'description' => (string) (\$calendar['description'] ?? ''),")
         && !str_contains($public, "'name' => (string) \$calendar['name'],\n            'description' => \$calendar['description'] ?? null,"),
-    'time.calendar_event/time.task objects declare title (real data) with name blank, and description (real data) with summary blank -- never copied across' =>
-        str_contains($public, "'title' => (string) \$row['title'],\n        'name' => '',\n        'summary' => '',\n        'description' => (string) (\$row['description'] ?? ''),")
-        && !str_contains($public, "'title' => (string) \$row['title'],\n            'name' => (string) \$row['title'],"),
+    'time.calendar_event/time.task objects declare summary (real data -- the calendar format\'s own SUMMARY property) with title blank, and description (real data) with name blank -- never copied across' =>
+        str_contains($public, "'title' => '',\n        'name' => '',\n        'summary' => (string) \$row['title'],\n        'description' => (string) (\$row['description'] ?? ''),")
+        && !str_contains($public, "'title' => (string) \$row['title'],\n        'name' => '',\n        'summary' => '',"),
     'Time result Collections carry no separate name, and summary/description are the same one real sentence, not aliased' =>
         str_contains($public, "'title' => 'Calendars',\n            'name' => '',\n            'summary' => \$summary,\n            'description' => \$summary,")
         && str_contains($public, "'title' => \$text !== '' ? 'Time results for ' . \$text : 'Time results',\n            'name' => '',\n            'summary' => \$summary,\n            'description' => \$summary,"),
+    'A calendar object source resource is labeled from the object\'s real summary, not its blank title' =>
+        str_contains($public, "'label' => (string) (\$object['summary'] ?? 'Source'),")
+        && !str_contains($public, "'label' => (string) (\$object['title'] ?? 'Source'),"),
 ];
 
 $failed = 0;

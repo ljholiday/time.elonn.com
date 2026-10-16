@@ -1985,12 +1985,13 @@ function timeObjectFromRow(array $row): array
     return [
         'id' => $id,
         'type' => $objectType,
-        // Canonical text fields: an event's or task's real stored data is its title and its
-        // (optional) description -- there is no distinct name or summary concept, so those
-        // stay blank rather than being filled by copying title's or description's value.
-        'title' => (string) $row['title'],
+        // Canonical text fields: the underlying calendar format defines this value (stored
+        // here under the 'title' key) as its SUMMARY property -- a condensed account, not a
+        // heading. It maps to summary, not title. There is no distinct heading or identifying
+        // name concept for an event/task, so title and name stay blank.
+        'title' => '',
         'name' => '',
-        'summary' => '',
+        'summary' => (string) $row['title'],
         'description' => (string) ($row['description'] ?? ''),
         'content' => [
             'component_type' => $componentType,
@@ -2240,7 +2241,7 @@ function timeDatasetResources(array $objects): array
             'content' => [
                 'kind' => 'link',
                 'href' => $href,
-                'label' => (string) ($object['title'] ?? 'Source'),
+                'label' => (string) ($object['summary'] ?? 'Source'),
                 'media_type' => 'text/html',
             ],
         ];

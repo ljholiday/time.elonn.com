@@ -11,7 +11,7 @@ object carrying a `source` reference back to the originating Social event.
 
 - Service id: `time.elonn`
 - Domain: `calendar`
-- Revision: `8`
+- Revision: `9`
 - Published: `2026-10-16T00:00:00Z`
 - Canonical JSON: `https://time.elonn.com/time.json`
 - Service Publication: `https://time.elonn.com/time-publication.json`
@@ -262,9 +262,11 @@ canonical text fields (dev.elonn canonical/object.md, Canonical text fields): `t
 `summary`, `description`. Their generic meaning is canonical and defined once there; this
 records what each means specifically for these three Time structures.
 
-- `time.calendar_event` and `time.task` each store exactly a `title` and an optional
-  `description` — there is no distinct `name` or `summary` concept, so those two stay empty
-  rather than being filled by copying `title`'s or `description`'s value.
+- `time.calendar_event` and `time.task` each store exactly a `summary` and an optional
+  `description` — the underlying calendar format's own SUMMARY property is a condensed
+  account, not a heading, so it maps to `summary`. There is no distinct heading or
+  identifying-name concept for an event or task, so `title` and `name` stay empty rather than
+  being filled by copying `summary`'s or `description`'s value.
 - `time.calendar` stores exactly a `name` and an optional `description` — there is no distinct
   `title` or `summary` concept, so those two stay empty for the same reason.
 - A generated results Collection (`time.calendars.results`, `time.search.results`) has one
