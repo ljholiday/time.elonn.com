@@ -11,8 +11,8 @@ object carrying a `source` reference back to the originating Social event.
 
 - Service id: `time.elonn`
 - Domain: `calendar`
-- Revision: `6`
-- Published: `2026-09-18T00:00:00Z`
+- Revision: `8`
+- Published: `2026-10-16T00:00:00Z`
 - Canonical JSON: `https://time.elonn.com/time.json`
 - Service Publication: `https://time.elonn.com/time-publication.json`
 
@@ -254,6 +254,23 @@ Create a new task.
 
 Time returns one canonical Service `Dataset` containing `time.calendar_event`, `time.task`, or
 `time.calendar` objects as appropriate to the operation.
+
+### Canonical text fields
+
+Every `time.calendar_event`, `time.task`, and `time.calendar` object declares all four
+canonical text fields (dev.elonn canonical/object.md, Canonical text fields): `title`, `name`,
+`summary`, `description`. Their generic meaning is canonical and defined once there; this
+records what each means specifically for these three Time structures.
+
+- `time.calendar_event` and `time.task` each store exactly a `title` and an optional
+  `description` — there is no distinct `name` or `summary` concept, so those two stay empty
+  rather than being filled by copying `title`'s or `description`'s value.
+- `time.calendar` stores exactly a `name` and an optional `description` — there is no distinct
+  `title` or `summary` concept, so those two stay empty for the same reason.
+- A generated results Collection (`time.calendars.results`, `time.search.results`) has one
+  real concept, a heading — `title` carries it, `name` stays empty. `summary` and
+  `description` are each assigned the same one real computed sentence (a count, e.g. "3
+  calendars available.") directly and independently, not derived from the other.
 
 ## Side Effects
 

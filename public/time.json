@@ -6,8 +6,8 @@
     "purpose": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar objects. Does not own Social events (social.event, owned by social.elonn) -- Social events synced into a member's calendar arrive here only as ingested calendar objects with a source reference back to Social."
   },
   "contract": {
-    "revision": 7,
-    "published": "2026-09-16T21:08:19Z"
+    "revision": 8,
+    "published": "2026-10-16T00:00:00Z"
   },
   "labels": {
     "field.search_text": "Search",

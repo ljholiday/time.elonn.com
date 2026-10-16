@@ -1893,11 +1893,15 @@ function timeCalendarObject(array $calendar): array
     return [
         'id' => $id,
         'type' => 'time.calendar',
-        'title' => (string) $calendar['name'],
-        'summary' => (string) ($calendar['description'] ?? ''),
+        // Canonical text fields (dev.elonn canonical/object.md): a calendar's real stored data
+        // is its name and its (optional) description -- there is no distinct title or
+        // summary concept, so those stay blank rather than being filled by copying name's or
+        // description's value.
+        'title' => '',
+        'name' => (string) $calendar['name'],
+        'summary' => '',
+        'description' => (string) ($calendar['description'] ?? ''),
         'content' => [
-            'name' => (string) $calendar['name'],
-            'description' => $calendar['description'] ?? null,
             'color' => $calendar['color'] ?? null,
             'timezone' => $calendar['timezone'] ?? null,
             'components' => (string) ($calendar['components'] ?? ''),
@@ -1930,10 +1934,16 @@ function timeCalendarsDataset(array $calendars, string $caller): array
         'collections' => count($objects) !== 1 ? [[
             'id' => $collectionId,
             'type' => 'time.calendars.results',
+            // Canonical text fields: this generated container has one real concept, a
+            // heading, not a separate identifying name -- name stays blank. summary and
+            // description are each assigned $summary directly and independently -- it is the
+            // one real sentence Time has for this result set, not derived from the other.
             'title' => 'Calendars',
+            'name' => '',
             'summary' => $summary,
+            'description' => $summary,
             'items' => array_map(static fn (array $o): string => (string) $o['id'], $objects),
-            'content' => ['count' => count($objects), 'description' => $summary],
+            'content' => ['count' => count($objects)],
         ]] : [],
         'resources' => [],
         'placements' => [],
@@ -1975,12 +1985,14 @@ function timeObjectFromRow(array $row): array
     return [
         'id' => $id,
         'type' => $objectType,
+        // Canonical text fields: an event's or task's real stored data is its title and its
+        // (optional) description -- there is no distinct name or summary concept, so those
+        // stay blank rather than being filled by copying title's or description's value.
         'title' => (string) $row['title'],
-        'summary' => (string) ($row['description'] ?? ''),
+        'name' => '',
+        'summary' => '',
+        'description' => (string) ($row['description'] ?? ''),
         'content' => [
-            'title' => (string) $row['title'],
-            'name' => (string) $row['title'],
-            'description' => (string) ($row['description'] ?? ''),
             'component_type' => $componentType,
             'location' => $row['location'] ?? null,
             'starts_at' => $row['occurrence_start'] ?? $row['starts_at'] ?? null,
@@ -2073,10 +2085,15 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
         'collections' => count($objects) !== 1 ? [[
             'id' => $collectionId,
             'type' => 'time.search.results',
+            // Canonical text fields: one real concept, a heading -- name stays blank.
+            // summary and description are each assigned $summary directly and
+            // independently -- the one real sentence Time has for this result set.
             'title' => $text !== '' ? 'Time results for ' . $text : 'Time results',
+            'name' => '',
             'summary' => $summary,
+            'description' => $summary,
             'items' => array_map(static fn (array $object): string => (string) $object['id'], $objects),
-            'content' => ['query' => $text, 'count' => count($objects), 'description' => $summary],
+            'content' => ['query' => $text, 'count' => count($objects)],
         ]] : [],
         'resources' => timeDatasetResources($objects),
         // A search/list result places nothing: its Objects are unplaced Findings.
