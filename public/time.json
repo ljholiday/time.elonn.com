@@ -6,8 +6,8 @@
     "purpose": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar objects. Does not own Social events (social.event, owned by social.elonn) -- Social events synced into a member's calendar arrive here only as ingested calendar objects with a source reference back to Social."
   },
   "contract": {
-    "revision": 9,
-    "published": "2026-10-16T00:00:00Z"
+    "revision": 10,
+    "published": "2026-10-17T00:00:00Z"
   },
   "labels": {
     "field.search_text": "Search",
@@ -316,11 +316,48 @@
       "Call",
       "Dataset"
     ],
-    "service": [
-      "time.calendar_event object",
-      "time.task object",
-      "time.calendar object"
-    ]
+    "service": {
+      "time.calendar_event object": {
+        "canonical_text_fields": {
+          "title": {"type": "string", "meaning": "The heading. Always empty -- an event has no distinct heading concept apart from its summary."},
+          "name": {"type": "string", "meaning": "The identifying name. Always empty -- an event has no distinct identifying name."},
+          "summary": {"type": "string", "meaning": "The underlying calendar format's own SUMMARY property -- a real condensed account, not a heading."},
+          "description": {"type": "string", "meaning": "The underlying calendar format's own DESCRIPTION property, when present; empty otherwise."}
+        }
+      },
+      "time.task object": {
+        "canonical_text_fields": {
+          "title": {"type": "string", "meaning": "The heading. Always empty -- a task has no distinct heading concept apart from its summary."},
+          "name": {"type": "string", "meaning": "The identifying name. Always empty -- a task has no distinct identifying name."},
+          "summary": {"type": "string", "meaning": "The underlying calendar format's own SUMMARY property -- a real condensed account, not a heading."},
+          "description": {"type": "string", "meaning": "The underlying calendar format's own DESCRIPTION property, when present; empty otherwise."}
+        }
+      },
+      "time.calendar object": {
+        "canonical_text_fields": {
+          "title": {"type": "string", "meaning": "The heading. Always empty -- a calendar has no distinct title concept apart from its name."},
+          "name": {"type": "string", "meaning": "The calendar's own real name."},
+          "summary": {"type": "string", "meaning": "A condensed account. Always empty -- a calendar has no distinct summary concept."},
+          "description": {"type": "string", "meaning": "The calendar's own optional description, when present; empty otherwise."}
+        }
+      },
+      "time.calendars.results Collection": {
+        "canonical_text_fields": {
+          "title": {"type": "string", "meaning": "A real heading for the calendars listing."},
+          "name": {"type": "string", "meaning": "The identifying name. Always empty -- one real concept, its heading."},
+          "summary": {"type": "string", "meaning": "A real computed count sentence, e.g. \"3 calendars available.\""},
+          "description": {"type": "string", "meaning": "The same real sentence as summary, assigned directly and independently."}
+        }
+      },
+      "time.search.results Collection": {
+        "canonical_text_fields": {
+          "title": {"type": "string", "meaning": "A real heading for the search results."},
+          "name": {"type": "string", "meaning": "The identifying name. Always empty -- one real concept, its heading."},
+          "summary": {"type": "string", "meaning": "A real computed result-count sentence."},
+          "description": {"type": "string", "meaning": "The same real sentence as summary, assigned directly and independently."}
+        }
+      }
+    }
   },
   "errors": [
     {

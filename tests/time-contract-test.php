@@ -21,6 +21,22 @@ foreach (($contract['endpoints'] ?? []) as $endpoint) {
 }
 
 $checks = [
+    'time.json declares all four canonical text fields, with type and meaning, for every Object/Collection structure it defines (Contract Authoring Guide, Canonical Text Fields)' =>
+        count((array) ($contract['structures']['service'] ?? [])) === 5
+        && array_reduce(
+            (array) ($contract['structures']['service'] ?? []),
+            static function (bool $carry, array $structure): bool {
+                $fields = (array) ($structure['canonical_text_fields'] ?? []);
+                foreach (['title', 'name', 'summary', 'description'] as $field) {
+                    if (($fields[$field]['type'] ?? '') !== 'string' || trim((string) ($fields[$field]['meaning'] ?? '')) === '') {
+                        return false;
+                    }
+                }
+
+                return $carry;
+            },
+            true
+        ),
     'publishes canonical Time service call route' => str_contains($public, "/time/call")
         && str_contains($public, 'timeServiceDataset('),
     'Time publishes a Mind-facing service descriptor' => str_contains($public, "/descriptor")
