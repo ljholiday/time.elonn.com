@@ -1968,7 +1968,8 @@ function timeOpenDataset(array $row, string $operation, string $caller): array
         'relationships' => [],
         'collections' => [],
         'resources' => timeDatasetResources([$object]),
-        'placements' => [['id' => 'placement:' . $object['id'] . ':carry', 'type' => 'carry', 'content' => ['object' => $object['id']]]],
+        // No `id` here: World mints a Placement's id itself (placement.md, Placement identity).
+        'placements' => [['type' => 'carry', 'content' => ['object' => $object['id']]]],
         'errors' => [],
         'context' => ['service' => 'time', 'operation' => $operation, 'caller' => $caller],
     ];
