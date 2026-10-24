@@ -6,8 +6,8 @@
     "purpose": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar objects. Does not own Social events (social.event, owned by social.elonn) -- Social events synced into a member's calendar arrive here only as ingested calendar objects with a source reference back to Social."
   },
   "contract": {
-    "revision": 10,
-    "published": "2026-10-17T00:00:00Z"
+    "revision": 11,
+    "published": "2026-10-24T00:00:00Z"
   },
   "labels": {
     "field.search_text": "Search",
@@ -346,7 +346,7 @@
           "title": {"type": "string", "meaning": "A real heading for the calendars listing."},
           "name": {"type": "string", "meaning": "The identifying name. Always empty -- one real concept, its heading."},
           "summary": {"type": "string", "meaning": "A real computed count sentence, e.g. \"3 calendars available.\""},
-          "description": {"type": "string", "meaning": "The same real sentence as summary, assigned directly and independently."}
+          "description": {"type": "string", "meaning": "Always empty -- no distinct concept beyond summary."}
         }
       },
       "time.search.results Collection": {
@@ -354,7 +354,7 @@
           "title": {"type": "string", "meaning": "A real heading for the search results."},
           "name": {"type": "string", "meaning": "The identifying name. Always empty -- one real concept, its heading."},
           "summary": {"type": "string", "meaning": "A real computed result-count sentence."},
-          "description": {"type": "string", "meaning": "The same real sentence as summary, assigned directly and independently."}
+          "description": {"type": "string", "meaning": "Always empty -- no distinct concept beyond summary."}
         }
       }
     }

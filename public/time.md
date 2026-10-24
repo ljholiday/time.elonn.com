@@ -270,9 +270,9 @@ records what each means specifically for these three Time structures.
 - `time.calendar` stores exactly a `name` and an optional `description` — there is no distinct
   `title` or `summary` concept, so those two stay empty for the same reason.
 - A generated results Collection (`time.calendars.results`, `time.search.results`) has one
-  real concept, a heading — `title` carries it, `name` stays empty. `summary` and
-  `description` are each assigned the same one real computed sentence (a count, e.g. "3
-  calendars available.") directly and independently, not derived from the other.
+  real concept, a heading — `title` carries it, `name` stays empty. `summary` carries the one
+  real computed sentence (a count, e.g. "3 calendars available."); `description` has no
+  distinct concept beyond it, so it stays empty rather than being filled by copying.
 
 ## Side Effects
 

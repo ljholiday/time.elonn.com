@@ -43,13 +43,14 @@ $checks = [
         && ($descriptor['service'] ?? '') === 'time'
         && isset($descriptor['operations']['time.search']['supports'])
         && ($descriptor['operations']['time.search']['required']['text'] ?? '') === 'non_empty_string',
-    'object sources include appointments and tasks' => str_contains($store, "'appointments'")
-        && str_contains($store, "'tasks'")
-        && str_contains($store, 'calendarObjectSource'),
-    'object sources follow object source contract' => str_contains($store, "'domain_actions'")
-        && str_contains($store, "'domain_permissions'")
-        && str_contains($store, "'source'")
-        && str_contains($store, "'object_type'"),
+    // objectSources()/calendarObjectSource() (the pre-canonical "object source" shape --
+    // source/object_type/domain_permissions/domain_actions, no id/type/content) were dead
+    // code: unreachable from any live route, confirmed by a repo-wide grep. Deleted rather
+    // than kept pinned in place by a passing test (dev.elonn charter: normalize producers,
+    // remove permanent compatibility/legacy paths).
+    'the dead pre-canonical object-source builder is gone, not merely unused' =>
+        !str_contains($store, 'calendarObjectSource')
+        && !str_contains($store, 'function objectSources('),
     'HTML Planner renders CalendarStore workspace data' => str_contains($public, "\$router->get('/planner'")
         && str_contains($public, ")->workspace(\$identity['id'], \$view, \$anchorDate, \$timezone)")
         && is_file($root . '/templates/planner.php'),
@@ -151,9 +152,9 @@ $checks = [
     'time.calendar_event/time.task objects declare summary (real data -- the calendar format\'s own SUMMARY property) with title blank, and description (real data) with name blank -- never copied across' =>
         str_contains($public, "'title' => '',\n        'name' => '',\n        'summary' => (string) \$row['title'],\n        'description' => (string) (\$row['description'] ?? ''),")
         && !str_contains($public, "'title' => (string) \$row['title'],\n        'name' => '',\n        'summary' => '',"),
-    'Time result Collections carry no separate name, and summary/description are the same one real sentence, not aliased' =>
-        str_contains($public, "'title' => 'Calendars',\n            'name' => '',\n            'summary' => \$summary,\n            'description' => \$summary,")
-        && str_contains($public, "'title' => \$text !== '' ? 'Time results for ' . \$text : 'Time results',\n            'name' => '',\n            'summary' => \$summary,\n            'description' => \$summary,"),
+    'Time result Collections carry no separate name, and description is not an alias of summary' =>
+        str_contains($public, "'title' => 'Calendars',\n            'name' => '',\n            'summary' => \$summary,\n            'description' => '',")
+        && str_contains($public, "'title' => \$text !== '' ? 'Time results for ' . \$text : 'Time results',\n            'name' => '',\n            'summary' => \$summary,\n            'description' => '',"),
     'A calendar object source resource is labeled from the object\'s real summary, not its blank title' =>
         str_contains($public, "'label' => (string) (\$object['summary'] ?? 'Source'),")
         && !str_contains($public, "'label' => (string) (\$object['title'] ?? 'Source'),"),

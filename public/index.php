@@ -1935,13 +1935,14 @@ function timeCalendarsDataset(array $calendars, string $caller): array
             'id' => $collectionId,
             'type' => 'time.calendars.results',
             // Canonical text fields: this generated container has one real concept, a
-            // heading, not a separate identifying name -- name stays blank. summary and
-            // description are each assigned $summary directly and independently -- it is the
-            // one real sentence Time has for this result set, not derived from the other.
+            // heading, not a separate identifying name -- name stays blank. summary carries
+            // the one real sentence Time has for this result set; description has no
+            // distinct concept beyond it, so it stays empty rather than being filled by
+            // copying (dev.elonn canonical/object.md, Canonical text fields).
             'title' => 'Calendars',
             'name' => '',
             'summary' => $summary,
-            'description' => $summary,
+            'description' => '',
             'items' => array_map(static fn (array $o): string => (string) $o['id'], $objects),
             'content' => ['count' => count($objects)],
         ]] : [],
@@ -2088,12 +2089,14 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
             'id' => $collectionId,
             'type' => 'time.search.results',
             // Canonical text fields: one real concept, a heading -- name stays blank.
-            // summary and description are each assigned $summary directly and
-            // independently -- the one real sentence Time has for this result set.
+            // summary carries the one real sentence Time has for this result set;
+            // description has no distinct concept beyond it, so it stays empty rather
+            // than being filled by copying (dev.elonn canonical/object.md, Canonical
+            // text fields).
             'title' => $text !== '' ? 'Time results for ' . $text : 'Time results',
             'name' => '',
             'summary' => $summary,
-            'description' => $summary,
+            'description' => '',
             'items' => array_map(static fn (array $object): string => (string) $object['id'], $objects),
             'content' => ['query' => $text, 'count' => count($objects)],
         ]] : [],
