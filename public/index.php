@@ -1869,7 +1869,17 @@ function timeCalendarObjectActions(string $id, array $calendar): array
         'id' => 'update_calendar',
         'type' => 'update_object',
         'label' => 'Edit',
-        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.calendar.update', 'object_id' => $id, 'payload' => []],
+        // dev.elonn canonical/action.md, Initial values: the calendar's own current
+        // name/description/color/timezone, matched to time.calendar.update's declared
+        // arguments -- a Runtime's generic form submits every rendered field, including ones
+        // the member never touched, so an empty payload here would submit blanks for them
+        // and silently clear description/color/timezone on an unrelated edit.
+        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.calendar.update', 'object_id' => $id, 'payload' => [
+            'name' => (string) $calendar['name'],
+            'description' => $calendar['description'],
+            'color' => $calendar['color'],
+            'timezone' => $calendar['timezone'],
+        ]],
         'availability' => 'enabled',
     ]];
 
@@ -2148,7 +2158,19 @@ function timeObjectActions(string $id, string $componentType, array $row): array
             'id' => 'update_task',
             'type' => 'update_object',
             'label' => 'Edit',
-            'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.update', 'object_id' => $id, 'payload' => []],
+            // dev.elonn canonical/action.md, Initial values: the task's own current field
+            // values, matched to time.task.update's declared arguments -- a Runtime's
+            // generic form submits every rendered field, including ones the member never
+            // touched, so an empty payload here would submit blanks for them and silently
+            // clear description/due_at/priority/etc. on an unrelated edit.
+            'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.update', 'object_id' => $id, 'payload' => [
+                'title' => (string) $row['title'],
+                'description' => $row['description'] ?? null,
+                'due_at' => $row['due_at'] ?? null,
+                'starts_at' => $row['starts_at'] ?? null,
+                'priority' => $row['priority'] ?? null,
+                'recurrence_rule' => $row['recurrence_rule'] ?? null,
+            ]],
             'availability' => 'enabled',
         ];
         $actions[] = $isCompleted
@@ -2180,7 +2202,28 @@ function timeObjectActions(string $id, string $componentType, array $row): array
         'id' => 'update_event',
         'type' => 'update_object',
         'label' => 'Edit',
-        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.event.update', 'object_id' => $id, 'payload' => []],
+        // dev.elonn canonical/action.md, Initial values: the event's own current field
+        // values, matched to time.event.update's declared arguments -- a Runtime's generic
+        // form submits every rendered field, including ones the member never touched, so an
+        // empty payload here would submit blanks for them and silently clear
+        // location/description/recurrence_rule/etc. on an unrelated edit. `calendar` is
+        // deliberately omitted: timeEventFieldsFromContent() does not read it at all, so
+        // supplying a value for it here would claim a current-value mechanism for an
+        // argument the handler does not actually implement yet.
+        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.event.update', 'object_id' => $id, 'payload' => [
+            'title' => (string) $row['title'],
+            'timezone' => $row['timezone'] ?? null,
+            'starts_at' => $row['occurrence_start'] ?? $row['starts_at'] ?? null,
+            'ends_at' => $row['occurrence_end'] ?? $row['ends_at'] ?? null,
+            'all_day' => (bool) ($row['all_day'] ?? false),
+            'location' => $row['location'] ?? null,
+            'description' => $row['description'] ?? null,
+            'recurrence_rule' => $row['recurrence_rule'] ?? null,
+            // timeFormatAttendees(), not the raw stored value: the argument is the plain
+            // string the member edits (matching content.attendees, built the same way just
+            // above), never the internal JSON encoding.
+            'attendees' => timeFormatAttendees($row['attendees'] ?? null),
+        ]],
         'availability' => 'enabled',
     ];
     $actions[] = [
