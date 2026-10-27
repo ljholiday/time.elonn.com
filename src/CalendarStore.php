@@ -184,6 +184,21 @@ final class CalendarStore
         return $this->createDefaultCalendar($identityUserId);
     }
 
+    /**
+     * The IANA zone a calendar declares as its own default, or null when it has none (the
+     * caller falls back to UTC). Used to resolve the effective timezone for a new event/task
+     * *after* the target calendar itself has been resolved, never before.
+     */
+    public function calendarTimezone(string $identityUserId, int $calendarId): ?string
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT timezone FROM time_calendars WHERE id = :id AND identity_user_id = :identity_user_id'
+        );
+        $stmt->execute(['id' => $calendarId, 'identity_user_id' => $identityUserId]);
+        $timezone = $stmt->fetchColumn();
+        return is_string($timezone) && trim($timezone) !== '' ? trim($timezone) : null;
+    }
+
     private function createDefaultCalendar(string $identityUserId): int
     {
         $now = gmdate('Y-m-d H:i:s');
@@ -355,14 +370,19 @@ final class CalendarStore
                 continue;
             }
 
+            $allDay = (bool) $row['all_day'];
             try {
                 $calendar = Reader::read((string) $row['calendar_data']);
                 $iterator = new EventIterator($calendar, (string) $row['uid']);
                 $iterator->fastForward($start);
                 while ($iterator->valid() && $iterator->getDTStart() < $end) {
                     $occurrence = $this->payload($row, $timezone);
-                    $occurrence['occurrence_start'] = $iterator->getDTStart()->setTimezone($timezone)->format(DATE_ATOM);
-                    $occurrence['occurrence_end'] = $iterator->getDTEnd()->setTimezone($timezone)->format(DATE_ATOM);
+                    $occurrence['occurrence_start'] = $allDay
+                        ? $iterator->getDTStart()->format('Y-m-d')
+                        : $iterator->getDTStart()->setTimezone($timezone)->format(DATE_ATOM);
+                    $occurrence['occurrence_end'] = $allDay
+                        ? $iterator->getDTEnd()->format('Y-m-d')
+                        : $iterator->getDTEnd()->setTimezone($timezone)->format(DATE_ATOM);
                     $result[] = $occurrence;
                     $iterator->next();
                 }
@@ -447,9 +467,17 @@ final class CalendarStore
      */
     private function payload(array $row, ?DateTimeZone $timezone = null): array
     {
-        $format = static function (mixed $value) use ($timezone): ?string {
+        $allDay = (bool) $row['all_day'];
+        // An all-day value is a bare calendar date with no time-of-day or zone of its own
+        // (stored as UTC midnight purely as a DATETIME-column convention); converting it to a
+        // display timezone would perform real UTC math on a value that was never a real
+        // instant, shifting the date across midnight. Only timed values convert.
+        $format = static function (mixed $value, bool $dateOnly) use ($timezone): ?string {
             if ($value === null || $value === '') {
                 return null;
+            }
+            if ($dateOnly) {
+                return substr((string) $value, 0, 10);
             }
             $date = new DateTimeImmutable((string) $value, new DateTimeZone('UTC'));
             return $timezone === null
@@ -467,10 +495,10 @@ final class CalendarStore
             'title' => (string) $row['title'],
             'description' => $row['description'] ?? null,
             'location' => $row['location'] ?? null,
-            'starts_at' => $format($row['starts_at'] ?? null),
-            'ends_at' => $format($row['ends_at'] ?? null),
-            'due_at' => $format($row['due_at'] ?? null),
-            'completed_at' => $format($row['completed_at'] ?? null),
+            'starts_at' => $format($row['starts_at'] ?? null, $allDay),
+            'ends_at' => $format($row['ends_at'] ?? null, $allDay),
+            'due_at' => $format($row['due_at'] ?? null, $allDay),
+            'completed_at' => $format($row['completed_at'] ?? null, false),
             'timezone' => $row['timezone'] ?? null,
             'all_day' => (bool) $row['all_day'],
             'status' => (string) $row['status'],

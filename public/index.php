@@ -295,13 +295,18 @@ $router->post('/time/call', static function () use ($config): void {
     }
 
     if ($operation === 'time.event.create') {
-        [$fields, $error] = timeEventFieldsFromContent($content, true);
+        // Resolve the target calendar first: its own declared timezone is the documented
+        // default (help.timezone) when the Call doesn't name one explicitly, so the calendar
+        // must be known before that default can be applied.
+        $store = new CalendarStore($pdo);
+        $calendarId = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+        $defaultTimezone = $store->calendarTimezone($memberId, $calendarId) ?? 'UTC';
+        [$fields, $error] = timeEventFieldsFromContent($content, true, $defaultTimezone);
         if ($error !== null) {
             timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $error, 422, $caller['service']);
             return;
         }
-        $store = new CalendarStore($pdo);
-        $fields['calendar_id'] = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+        $fields['calendar_id'] = $calendarId;
         try {
             $created = $store->create($memberId, $fields);
         } catch (\Throwable $throwable) {
@@ -337,16 +342,25 @@ $router->post('/time/call', static function () use ($config): void {
             return;
         }
 
-        [$fields, $error] = timeEventFieldsFromContent($content, false);
+        // Editing an existing event interprets any offset-less starts_at/ends_at in the
+        // event's own current zone, not a freshly-resolved calendar default -- changing which
+        // calendar an event lives in should not silently retime it.
+        $defaultTimezone = validTimezone((string) ($existing['timezone'] ?? '')) ?? 'UTC';
+        [$fields, $error] = timeEventFieldsFromContent($content, false, $defaultTimezone);
         if ($error !== null) {
             timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $error, 422, $caller['service']);
             return;
         }
         if (array_key_exists('starts_at', $fields) && !array_key_exists('ends_at', $fields)
             && $existing['starts_at'] !== null && $existing['ends_at'] !== null) {
+            // $existing's instants are always ISO 8601 with an explicit UTC offset (CalendarStore::find()),
+            // so they're unambiguous; $fields['starts_at'] is a bare wall-clock string paired with
+            // $fields['timezone'] (set above whenever starts_at is), so it must be parsed with that same
+            // zone, not left to PHP's ambient default.
+            $durationZone = new DateTimeZone((string) ($fields['timezone'] ?? $defaultTimezone));
             $oldStart = new DateTimeImmutable((string) $existing['starts_at']);
             $oldEnd = new DateTimeImmutable((string) $existing['ends_at']);
-            $newStart = new DateTimeImmutable($fields['starts_at']);
+            $newStart = new DateTimeImmutable($fields['starts_at'], $durationZone);
             $fields['ends_at'] = $newStart->add($oldStart->diff($oldEnd))->format('Y-m-d H:i:s');
         }
         if (array_key_exists('calendar', $content)) {
@@ -367,14 +381,16 @@ $router->post('/time/call', static function () use ($config): void {
     }
 
     if ($operation === 'time.task.create') {
-        [$fields, $error] = timeTaskFieldsFromContent($content, true);
+        $store = new CalendarStore($pdo);
+        $calendarId = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+        $defaultTimezone = $store->calendarTimezone($memberId, $calendarId) ?? 'UTC';
+        [$fields, $error] = timeTaskFieldsFromContent($content, true, $defaultTimezone);
         if ($error !== null) {
             timeServiceDatasetError('time.invalid_task_call', 'invalid_call', $error, 422, $caller['service']);
             return;
         }
         $fields['component_type'] = 'VTODO';
-        $store = new CalendarStore($pdo);
-        $fields['calendar_id'] = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+        $fields['calendar_id'] = $calendarId;
         try {
             $created = $store->create($memberId, $fields);
         } catch (\Throwable $throwable) {
@@ -410,7 +426,8 @@ $router->post('/time/call', static function () use ($config): void {
             } elseif ($operation === 'time.task.reopen') {
                 $store->reopen($memberId, $numericId);
             } else {
-                [$fields, $error] = timeTaskFieldsFromContent($content, false);
+                $defaultTimezone = validTimezone((string) ($existing['timezone'] ?? '')) ?? 'UTC';
+                [$fields, $error] = timeTaskFieldsFromContent($content, false, $defaultTimezone);
                 if ($error !== null) {
                     timeServiceDatasetError('time.invalid_task_call', 'invalid_call', $error, 422, $caller['service']);
                     return;
@@ -1650,10 +1667,20 @@ function timeParseDateTime(mixed $value, ?string $timezone): ?DateTimeImmutable
  * time.event.update (every field is optional; only the keys present in $content are returned,
  * so CalendarStore::update()'s merge leaves everything else untouched).
  *
+ * Date/timezone contract: starts_at/ends_at are ISO 8601 and may carry their own UTC offset
+ * (help.starts_at's documented shape); that offset is always honored over everything else, per
+ * "preserve offsets or convert explicitly." $defaultTimezone is the zone used only when a value
+ * carries no offset of its own -- the caller resolves this *after* picking the target calendar
+ * (its own declared zone, or UTC) for a create, or the existing object's current zone for an
+ * update, never a guess made before the calendar is known. CalendarObject::build() expects a
+ * bare wall-clock string paired with a 'timezone' field naming the zone those digits are in, so
+ * every parsed instant is explicitly converted into $defaultTimezone before formatting, rather
+ * than formatted in whatever zone happened to survive parsing.
+ *
  * @param array<string, mixed> $content
  * @return array{0: array<string, mixed>, 1: ?string}
  */
-function timeEventFieldsFromContent(array $content, bool $requireCore): array
+function timeEventFieldsFromContent(array $content, bool $requireCore, string $defaultTimezone): array
 {
     $fields = [];
 
@@ -1667,38 +1694,43 @@ function timeEventFieldsFromContent(array $content, bool $requireCore): array
         return [[], 'title is required.'];
     }
 
-    $timezone = cleanOptionalString($content['timezone'] ?? null);
-    if ($timezone !== null && validTimezone($timezone) === null) {
+    $timezoneInput = cleanOptionalString($content['timezone'] ?? null);
+    if ($timezoneInput !== null && validTimezone($timezoneInput) === null) {
         return [[], 'timezone is not valid.'];
     }
-    if ($timezone !== null) {
-        $fields['timezone'] = $timezone;
+    $effectiveTimezone = $timezoneInput ?? $defaultTimezone;
+    if ($timezoneInput !== null || $requireCore) {
+        // An explicit override always sticks; a brand-new object must always declare a zone
+        // (its own default or UTC) since none exists yet to fall back on.
+        $fields['timezone'] = $effectiveTimezone;
+    }
+    $effectiveZone = new DateTimeZone($effectiveTimezone);
+
+    $allDay = array_key_exists('all_day', $content) ? truthy($content['all_day']) : null;
+    if ($allDay !== null) {
+        $fields['all_day'] = $allDay ? 1 : 0;
     }
 
     $startsAt = null;
     if (array_key_exists('starts_at', $content)) {
-        $startsAt = timeParseDateTime($content['starts_at'], $timezone);
+        $startsAt = timeParseDateTime($content['starts_at'], $effectiveTimezone);
         if ($startsAt === null) {
             return [[], 'starts_at is not a valid date/time.'];
         }
-        $fields['starts_at'] = $startsAt->format('Y-m-d H:i:s');
+        $fields['starts_at'] = $startsAt->setTimezone($effectiveZone)->format('Y-m-d H:i:s');
     } elseif ($requireCore) {
         return [[], 'starts_at is required.'];
     }
 
     $endsAtRaw = cleanOptionalString($content['ends_at'] ?? null);
     if ($endsAtRaw !== null) {
-        $endsAt = timeParseDateTime($endsAtRaw, $timezone);
+        $endsAt = timeParseDateTime($endsAtRaw, $effectiveTimezone);
         if ($endsAt === null) {
             return [[], 'ends_at is not a valid date/time.'];
         }
-        $fields['ends_at'] = $endsAt->format('Y-m-d H:i:s');
+        $fields['ends_at'] = $endsAt->setTimezone($effectiveZone)->format('Y-m-d H:i:s');
     } elseif ($requireCore && $startsAt !== null) {
-        $fields['ends_at'] = $startsAt->modify('+1 hour')->format('Y-m-d H:i:s');
-    }
-
-    if (array_key_exists('all_day', $content)) {
-        $fields['all_day'] = truthy($content['all_day']) ? 1 : 0;
+        $fields['ends_at'] = $startsAt->modify('+1 hour')->setTimezone($effectiveZone)->format('Y-m-d H:i:s');
     }
 
     foreach (['location', 'description', 'recurrence_rule', 'attendees'] as $key) {
@@ -1712,12 +1744,15 @@ function timeEventFieldsFromContent(array $content, bool $requireCore): array
 }
 
 /**
- * Same shape as timeEventFieldsFromContent(), for time.task.create / time.task.update.
+ * Same shape as timeEventFieldsFromContent(), for time.task.create / time.task.update. Tasks
+ * have no 'timezone' Contract argument of their own, but due_at/starts_at still need a zone to
+ * interpret an offset-less value and to pair with the naive string CalendarObject::build()
+ * expects -- see timeEventFieldsFromContent()'s doc comment for the full contract.
  *
  * @param array<string, mixed> $content
  * @return array{0: array<string, mixed>, 1: ?string}
  */
-function timeTaskFieldsFromContent(array $content, bool $requireCore): array
+function timeTaskFieldsFromContent(array $content, bool $requireCore, string $defaultTimezone): array
 {
     $fields = [];
 
@@ -1731,6 +1766,11 @@ function timeTaskFieldsFromContent(array $content, bool $requireCore): array
         return [[], 'title is required.'];
     }
 
+    if ($requireCore) {
+        $fields['timezone'] = $defaultTimezone;
+    }
+    $effectiveZone = new DateTimeZone($defaultTimezone);
+
     foreach (['due_at', 'starts_at'] as $key) {
         if (!array_key_exists($key, $content)) {
             continue;
@@ -1740,11 +1780,11 @@ function timeTaskFieldsFromContent(array $content, bool $requireCore): array
             $fields[$key] = null;
             continue;
         }
-        $parsed = timeParseDateTime($raw, null);
+        $parsed = timeParseDateTime($raw, $defaultTimezone);
         if ($parsed === null) {
             return [[], $key . ' is not a valid date/time.'];
         }
-        $fields[$key] = $parsed->format('Y-m-d H:i:s');
+        $fields[$key] = $parsed->setTimezone($effectiveZone)->format('Y-m-d H:i:s');
     }
 
     if (array_key_exists('priority', $content)) {
@@ -1986,6 +2026,27 @@ function timeOpenDataset(array $row, string $operation, string $caller): array
     ];
 }
 
+/**
+ * Formats a stored instant (always a UTC-naive 'Y-m-d H:i:s' string, per the storage
+ * convention CalendarObject::parse() and CalendarStore::payload() both use) for the Contract
+ * boundary. An all-day value carries no time-of-day or zone of its own, so it becomes a bare
+ * 'Y-m-d' date; a timed value becomes an ISO 8601 datetime with an explicit offset, expressed
+ * in the object's own declared timezone (falling back to UTC) so a caller sees the same local
+ * time the event was created or last edited in.
+ */
+function timeFormatContractInstant(mixed $storedUtc, bool $allDay, mixed $timezone): ?string
+{
+    if (!is_string($storedUtc) || trim($storedUtc) === '') {
+        return null;
+    }
+    if ($allDay) {
+        return substr($storedUtc, 0, 10);
+    }
+    $zoneName = is_string($timezone) ? validTimezone($timezone) : null;
+    $date = new DateTimeImmutable($storedUtc, new DateTimeZone('UTC'));
+    return $date->setTimezone(new DateTimeZone($zoneName ?? 'UTC'))->format(DATE_ATOM);
+}
+
 /** @param array<string, mixed> $row @return array<string, mixed> */
 function timeObjectFromRow(array $row): array
 {
@@ -1993,6 +2054,8 @@ function timeObjectFromRow(array $row): array
     $componentType = (string) $row['component_type'];
     $objectType = $componentType === 'VTODO' ? 'time.task' : 'time.calendar_event';
     $sourceUrl = trim((string) ($row['source_url'] ?? ''));
+    $allDay = truthy($row['all_day'] ?? false);
+    $timezone = $row['timezone'] ?? null;
 
     return [
         'id' => $id,
@@ -2008,11 +2071,11 @@ function timeObjectFromRow(array $row): array
         'content' => [
             'component_type' => $componentType,
             'location' => $row['location'] ?? null,
-            'starts_at' => $row['occurrence_start'] ?? $row['starts_at'] ?? null,
-            'ends_at' => $row['occurrence_end'] ?? $row['ends_at'] ?? null,
-            'due_at' => $row['due_at'] ?? null,
-            'completed_at' => $row['completed_at'] ?? null,
-            'all_day' => (bool) ($row['all_day'] ?? false),
+            'starts_at' => timeFormatContractInstant($row['occurrence_start'] ?? $row['starts_at'] ?? null, $allDay, $timezone),
+            'ends_at' => timeFormatContractInstant($row['occurrence_end'] ?? $row['ends_at'] ?? null, $allDay, $timezone),
+            'due_at' => timeFormatContractInstant($row['due_at'] ?? null, $allDay, $timezone),
+            'completed_at' => timeFormatContractInstant($row['completed_at'] ?? null, false, $timezone),
+            'all_day' => $allDay,
             'status' => (string) ($row['status'] ?? ''),
             'priority' => $row['priority'] ?? null,
             'recurrence_rule' => $row['recurrence_rule'] ?? null,
@@ -2166,8 +2229,12 @@ function timeObjectActions(string $id, string $componentType, array $row): array
             'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.update', 'object_id' => $id, 'payload' => [
                 'title' => (string) $row['title'],
                 'description' => $row['description'] ?? null,
-                'due_at' => $row['due_at'] ?? null,
-                'starts_at' => $row['starts_at'] ?? null,
+                // timeFormatContractInstant(), not the raw stored UTC-naive string: a Runtime
+                // that resubmits this value unchanged would otherwise have it reinterpreted as
+                // wall-clock-in-the-task's-own-zone by timeTaskFieldsFromContent(), shifting
+                // the real instant by that zone's offset on every untouched save.
+                'due_at' => timeFormatContractInstant($row['due_at'] ?? null, false, $row['timezone'] ?? null),
+                'starts_at' => timeFormatContractInstant($row['starts_at'] ?? null, false, $row['timezone'] ?? null),
                 'priority' => $row['priority'] ?? null,
                 'recurrence_rule' => $row['recurrence_rule'] ?? null,
             ]],
@@ -2213,9 +2280,11 @@ function timeObjectActions(string $id, string $componentType, array $row): array
         'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.event.update', 'object_id' => $id, 'payload' => [
             'title' => (string) $row['title'],
             'timezone' => $row['timezone'] ?? null,
-            'starts_at' => $row['occurrence_start'] ?? $row['starts_at'] ?? null,
-            'ends_at' => $row['occurrence_end'] ?? $row['ends_at'] ?? null,
-            'all_day' => (bool) ($row['all_day'] ?? false),
+            // timeFormatContractInstant(), not the raw stored UTC-naive string -- see the
+            // matching comment on time.task.update's payload just above.
+            'starts_at' => timeFormatContractInstant($row['occurrence_start'] ?? $row['starts_at'] ?? null, truthy($row['all_day'] ?? false), $row['timezone'] ?? null),
+            'ends_at' => timeFormatContractInstant($row['occurrence_end'] ?? $row['ends_at'] ?? null, truthy($row['all_day'] ?? false), $row['timezone'] ?? null),
+            'all_day' => truthy($row['all_day'] ?? false),
             'location' => $row['location'] ?? null,
             'description' => $row['description'] ?? null,
             'recurrence_rule' => $row['recurrence_rule'] ?? null,
@@ -2604,6 +2673,9 @@ function eventFormOld(array $event): array
     return [
         'calendar_id' => (string) ($event['calendar_id'] ?? ''),
         'title' => (string) ($event['title'] ?? ''),
+        // time_events (the legacy table this reads) stores starts_at/ends_at as plain local
+        // wall-clock digits with no UTC conversion anywhere in its own pipeline (unlike the
+        // canonical time_calendar_objects table CalendarStore reads) -- no zone conversion here.
         'starts_at' => htmlDateTimeLocal($event['starts_at'] ?? null),
         'ends_at' => htmlDateTimeLocal($event['ends_at'] ?? null),
         'location' => (string) ($event['location'] ?? ''),
@@ -2623,7 +2695,7 @@ function taskFormOld(array $task): array
     return [
         'calendar_id' => (string) ($task['calendar_id'] ?? ''),
         'title' => (string) ($task['title'] ?? ''),
-        'due_at' => htmlDateTimeLocal($task['due_at'] ?? null),
+        'due_at' => htmlDateTimeLocal($task['due_at'] ?? null, $task['timezone'] ?? null),
         'description' => (string) ($task['description'] ?? ''),
         'location' => (string) ($task['location'] ?? ''),
         'timezone' => (string) ($task['timezone'] ?? ''),
@@ -2653,7 +2725,7 @@ function taskFieldsFromInput(array $input, ?array $existing = null): array
         'location' => cleanOptionalString($input['location'] ?? null),
         'due_at' => normalizeDateTime($input['due_at'] ?? null),
         'completed_at' => $completedAt,
-        'timezone' => cleanOptionalString($input['timezone'] ?? null),
+        'timezone' => cleanOptionalString($input['timezone'] ?? null) ?? ($existing['timezone'] ?? null),
         'all_day' => truthy($input['all_day'] ?? false) ? 1 : 0,
         'status' => $status,
         'priority' => taskPriority($input['priority'] ?? null),
@@ -2691,8 +2763,8 @@ function appointmentFormOld(array $appointment): array
     return [
         'calendar_id' => (string) ($appointment['calendar_id'] ?? ''),
         'title' => (string) ($appointment['title'] ?? ''),
-        'starts_at' => htmlDateTimeLocal($appointment['starts_at'] ?? null),
-        'ends_at' => htmlDateTimeLocal($appointment['ends_at'] ?? null),
+        'starts_at' => htmlDateTimeLocal($appointment['starts_at'] ?? null, $appointment['timezone'] ?? null),
+        'ends_at' => htmlDateTimeLocal($appointment['ends_at'] ?? null, $appointment['timezone'] ?? null),
         'location' => (string) ($appointment['location'] ?? ''),
         'description' => (string) ($appointment['description'] ?? ''),
         'timezone' => (string) ($appointment['timezone'] ?? ''),
@@ -2727,7 +2799,10 @@ function appointmentFieldsFromInput(array $input, ?array $existing = null): arra
         'location' => cleanOptionalString($input['location'] ?? null),
         'starts_at' => normalizeDateTime($input['starts_at'] ?? null),
         'ends_at' => normalizeDateTime($input['ends_at'] ?? null),
-        'timezone' => cleanOptionalString($input['timezone'] ?? null),
+        // A blank submitted field preserves the object's existing zone rather than wiping it to
+        // null, which would otherwise make CalendarObject::build() reinterpret the wall-clock
+        // digits above with no zone at all (PHP's ambient default) on the very next save.
+        'timezone' => cleanOptionalString($input['timezone'] ?? null) ?? ($existing['timezone'] ?? null),
         'all_day' => truthy($input['all_day'] ?? false) ? 1 : 0,
         'status' => cleanString($input['status'] ?? null) ?? appointmentDisplayStatus($existing['status'] ?? null),
     ];
@@ -2835,14 +2910,31 @@ function html(string $value): string
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
-function htmlDateTimeLocal(mixed $value): string
+/**
+ * Prefills a <input type="datetime-local"> with a stored instant, converted into the zone the
+ * edit form's own Timezone field shows -- never the ambient/UTC zone the value happens to
+ * carry. CalendarStore::find()/payload() always return starts_at/ends_at/due_at as ISO 8601
+ * with an explicit UTC offset, so reading the raw digits without converting first would show
+ * the UTC wall clock mislabeled as local time; saving that unmodified value back would then
+ * silently shift the real instant by the zone's offset on every open-and-resave. A bare
+ * 'Y-m-d' (all-day, no time-of-day or zone of its own) is shown at local midnight verbatim.
+ */
+function htmlDateTimeLocal(mixed $value, mixed $timezone = null): string
 {
     if (!is_string($value) || trim($value) === '') {
         return '';
     }
+    if (!str_contains($value, 'T')) {
+        return $value . 'T00:00';
+    }
 
     try {
-        return (new DateTimeImmutable($value))->format('Y-m-d\TH:i');
+        $date = new DateTimeImmutable($value);
+        $zoneName = is_string($timezone) ? validTimezone($timezone) : null;
+        if ($zoneName !== null) {
+            $date = $date->setTimezone(new DateTimeZone($zoneName));
+        }
+        return $date->format('Y-m-d\TH:i');
     } catch (Throwable) {
         return '';
     }

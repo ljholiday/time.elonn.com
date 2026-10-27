@@ -281,6 +281,19 @@ final class CalendarObject
             return;
         }
 
+        // $value may already carry its own offset or zone (e.g. a round-tripped "+00:00"
+        // string from CalendarStore::update()'s unchanged-field merge) -- PHP honors that for
+        // computing the instant but keeps the date tagged with whatever zone the string
+        // carried, ignoring $timezone entirely. Explicitly convert into the declared $timezone
+        // so the instant is preserved but the VEVENT/VTODO is tagged with the zone the caller
+        // actually declared, not an incidental one, per "preserve offsets or convert
+        // explicitly" -- otherwise an edit that never touches this field would still silently
+        // retag it (and, downstream, flip the stored 'timezone' column) to whatever the
+        // embedded offset happened to be, typically UTC.
+        if ($timezone !== '') {
+            $date = $date->setTimezone(new DateTimeZone($timezone));
+        }
+
         $component->add($name, $date);
     }
 }

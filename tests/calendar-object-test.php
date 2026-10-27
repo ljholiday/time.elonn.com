@@ -48,6 +48,23 @@ $parsedTimezoneAppointment = CalendarObject::parse($timezoneAppointment);
 $checks['Timezone round trip'] = $parsedTimezoneAppointment['timezone'] === 'America/Los_Angeles'
     && $parsedTimezoneAppointment['starts_at'] === '2026-06-22 16:00:00';
 
+// Regression: CalendarStore::update()'s unchanged-field merge feeds build() an
+// already-offset-tagged ISO 8601 string (from CalendarStore::payload(), e.g.
+// "...T16:00:00+00:00") alongside the object's own declared 'timezone'. The offset must still
+// be honored for the instant, but the declared timezone must win for how the value is tagged --
+// not silently flip to UTC because that's what the embedded offset happened to be.
+$mergedEditAppointment = CalendarObject::build([
+    'component_type' => 'VEVENT',
+    'title' => 'Renamed, same instant',
+    'starts_at' => '2026-07-10T13:00:00+00:00',
+    'ends_at' => '2026-07-10T14:00:00+00:00',
+    'timezone' => 'America/New_York',
+]);
+$parsedMergedEditAppointment = CalendarObject::parse($mergedEditAppointment);
+$checks['An offset-tagged starts_at paired with a declared timezone keeps that timezone, not UTC'] =
+    $parsedMergedEditAppointment['timezone'] === 'America/New_York'
+    && $parsedMergedEditAppointment['starts_at'] === '2026-07-10 13:00:00';
+
 $appointmentWithAttendees = CalendarObject::build([
     'component_type' => 'VEVENT',
     'title' => 'Lunch with JJ',

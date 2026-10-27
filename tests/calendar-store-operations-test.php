@@ -72,6 +72,64 @@ try {
     $checks['delete() removes the objects'] = $store->find($identityUserId, (int) $task['id']) === null
         && $store->find($identityUserId, (int) $event['id']) === null;
 
+    $checks['calendarTimezone() returns null until the calendar declares one'] = $store->calendarTimezone($identityUserId, $calendarId) === null;
+    $store->updateCalendar($identityUserId, $calendarId, ['timezone' => 'America/New_York']);
+    $checks['calendarTimezone() returns the calendar\'s own declared zone'] = $store->calendarTimezone($identityUserId, $calendarId) === 'America/New_York';
+
+    // Date/timezone round-tripping (fix for the contract/storage/CalDAV date boundary): a timed
+    // instant stored as the established 'naive UTC wall-clock' convention must come back from
+    // find() with its real offset intact, and must stay byte-identical after an edit that
+    // doesn't touch it -- the exact value CalendarStore::update()'s merge, and the duration-
+    // preserving logic in public/index.php's time.event.update handler, both depend on.
+    $dstEvent = $store->create($identityUserId, [
+        'component_type' => 'VEVENT',
+        'title' => 'Spans spring-forward',
+        'calendar_id' => $calendarId,
+        // CalendarObject::build() expects a bare wall-clock string paired with 'timezone',
+        // matching timeEventFieldsFromContent()'s own output shape -- 09:00 local on both
+        // sides of the spring-forward transition (EST before, EDT after).
+        'starts_at' => '2026-03-07 09:00:00',
+        'ends_at' => '2026-03-09 09:00:00',
+        'timezone' => 'America/New_York',
+    ]);
+    // find()/create() report in UTC (no display timezone requested) -- 14:00/13:00 UTC is the
+    // same instant as 09:00 America/New_York on both sides of the spring-forward transition.
+    $checks['create() stores a DST-spanning instant as an explicit-offset ISO 8601 value, not a bare string'] =
+        $dstEvent['starts_at'] === '2026-03-07T14:00:00+00:00'
+        && $dstEvent['ends_at'] === '2026-03-09T13:00:00+00:00';
+
+    $touchedOnlyTitle = $store->update($identityUserId, (int) $dstEvent['id'], ['title' => 'Renamed, same instant']);
+    $checks['update() with an unrelated field leaves a DST-spanning instant byte-identical'] =
+        $touchedOnlyTitle['starts_at'] === $dstEvent['starts_at']
+        && $touchedOnlyTitle['ends_at'] === $dstEvent['ends_at'];
+    $store->delete($identityUserId, (int) $dstEvent['id']);
+
+    // All-day round-tripping (fix for payload()'s all-day timezone shift): an all-day value
+    // carries no time-of-day or zone of its own, so viewing it through a non-UTC display
+    // timezone must never roll the calendar date to the adjacent day.
+    $allDayEvent = $store->create($identityUserId, [
+        'component_type' => 'VEVENT',
+        'title' => 'Conference',
+        'calendar_id' => $calendarId,
+        'starts_at' => '2026-03-08 00:00:00',
+        'ends_at' => '2026-03-10 00:00:00',
+        'all_day' => 1,
+    ]);
+    $checks['create() stores an all-day event\'s dates as bare calendar dates'] =
+        $allDayEvent['starts_at'] === '2026-03-08' && $allDayEvent['ends_at'] === '2026-03-10';
+
+    $workspace = $store->workspace($identityUserId, 'agenda', '2026-03-01', 'America/Los_Angeles');
+    $viewedAllDay = null;
+    foreach ($workspace['appointments'] as $appointment) {
+        if ((int) $appointment['id'] === (int) $allDayEvent['id']) {
+            $viewedAllDay = $appointment;
+        }
+    }
+    $checks['workspace() in a non-UTC display timezone does not shift an all-day event\'s dates'] =
+        $viewedAllDay !== null
+        && $viewedAllDay['starts_at'] === '2026-03-08' && $viewedAllDay['ends_at'] === '2026-03-10';
+    $store->delete($identityUserId, (int) $allDayEvent['id']);
+
     $renamed = $store->updateCalendar($identityUserId, $calendarId, ['name' => 'Work', 'color' => '#4285F4']);
     $checks['updateCalendar() changes only the given fields'] = $renamed['name'] === 'Work'
         && $renamed['color'] === '#4285F4';
