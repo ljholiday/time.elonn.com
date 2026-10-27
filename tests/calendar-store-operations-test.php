@@ -36,6 +36,11 @@ try {
     $byName = $store->resolveCalendarId($identityUserId, 'calendar');
     $checks['resolveCalendarId matches an existing calendar case-insensitively by name'] = $byName === $calendarId;
 
+    $checks['findCalendarIdByName matches an existing calendar case-insensitively'] =
+        $store->findCalendarIdByName($identityUserId, 'CALENDAR') === $calendarId;
+    $checks['findCalendarIdByName returns null for an unknown name, never a substitute'] =
+        $store->findCalendarIdByName($identityUserId, 'Nonexistent') === null;
+
     $task = $store->create($identityUserId, [
         'component_type' => 'VTODO',
         'title' => 'Call JJ',

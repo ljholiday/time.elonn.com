@@ -16,6 +16,11 @@ declare(strict_types=1);
 // timeTaskFieldsFromContent() expect back, never the raw stored UTC-naive DB string -- a Runtime
 // that resubmits an untouched value verbatim would otherwise have it reinterpreted in the
 // object's own zone, shifting the real instant by that zone's offset on every unrelated edit.
+//
+// Also pins the calendar-membership-preservation fix: the Edit action's payload must carry the
+// object's *current* calendar by name, so a Runtime resubmitting it unchanged resolves back to
+// the same calendar (time.event.update/time.task.update match it by name) instead of the
+// field arriving blank and the handler reassigning the object to an arbitrary calendar.
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
@@ -77,6 +82,7 @@ function reproducedTaskEditPayload(array $row): array
         'starts_at' => timeFormatContractInstant($row['starts_at'] ?? null, false, $row['timezone'] ?? null),
         'priority' => $row['priority'] ?? null,
         'recurrence_rule' => $row['recurrence_rule'] ?? null,
+        'calendar' => (string) ($row['calendar_name'] ?? ''),
     ];
 }
 
@@ -94,6 +100,7 @@ function reproducedEventEditPayload(array $row): array
         'description' => $row['description'] ?? null,
         'recurrence_rule' => $row['recurrence_rule'] ?? null,
         'attendees' => timeFormatAttendees($row['attendees'] ?? null),
+        'calendar' => (string) ($row['calendar_name'] ?? ''),
     ];
 }
 
@@ -105,6 +112,7 @@ $taskPayload = reproducedTaskEditPayload([
     'title' => 'Ship the thing', 'description' => 'Before Friday', 'due_at' => '2026-10-31 00:00:00',
     'timezone' => 'America/Los_Angeles',
     'starts_at' => null, 'priority' => 3, 'recurrence_rule' => null,
+    'calendar_name' => 'Work',
 ]);
 
 $eventPayload = reproducedEventEditPayload([
@@ -114,6 +122,7 @@ $eventPayload = reproducedEventEditPayload([
     'all_day' => 0, 'location' => 'Zoom', 'description' => null,
     'recurrence_rule' => 'FREQ=WEEKLY;BYDAY=MO',
     'attendees' => json_encode([['email' => 'a@example.com'], ['email' => 'b@example.com']]),
+    'calendar_name' => 'Work',
 ]);
 
 $allDayEventPayload = reproducedEventEditPayload([
@@ -132,10 +141,14 @@ $checks = [
         $taskPayload['title'] === 'Ship the thing' && $taskPayload['description'] === 'Before Friday'
         && $taskPayload['due_at'] === '2026-10-30T17:00:00-07:00' && $taskPayload['priority'] === 3
         && $taskPayload['starts_at'] === null,
+    'time.task.update\'s payload carries the task\'s current calendar by name, so an unchanged resubmission preserves membership' =>
+        $taskPayload['calendar'] === 'Work',
     'time.event.update carries the event\'s real current fields, falling back to starts_at/ends_at when no occurrence override exists, as local ISO 8601 instants with an explicit offset' =>
         $eventPayload['title'] === 'Weekly planning' && $eventPayload['starts_at'] === '2026-06-22T09:00:00-07:00'
         && $eventPayload['ends_at'] === '2026-06-22T10:00:00-07:00' && $eventPayload['location'] === 'Zoom'
         && $eventPayload['recurrence_rule'] === 'FREQ=WEEKLY;BYDAY=MO',
+    'time.event.update\'s payload carries the event\'s current calendar by name, so an unchanged resubmission preserves membership' =>
+        $eventPayload['calendar'] === 'Work',
     'time.event.update\'s attendees payload is the plain member-facing string, not the internal JSON encoding' =>
         $eventPayload['attendees'] === 'a@example.com, b@example.com',
     'an all-day event\'s Edit payload carries bare calendar dates, never shifted by the viewer\'s or event\'s own timezone' =>

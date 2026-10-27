@@ -166,22 +166,37 @@ final class CalendarStore
      */
     public function resolveCalendarId(string $identityUserId, ?string $calendarName): int
     {
-        $calendars = $this->calendars($identityUserId);
         $name = trim((string) $calendarName);
-
         if ($name !== '') {
-            foreach ($calendars as $calendar) {
-                if (strcasecmp((string) $calendar['name'], $name) === 0) {
-                    return (int) $calendar['id'];
-                }
+            $found = $this->findCalendarIdByName($identityUserId, $name);
+            if ($found !== null) {
+                return $found;
             }
         }
 
+        $calendars = $this->calendars($identityUserId);
         if ($calendars !== []) {
             return (int) $calendars[0]['id'];
         }
 
         return $this->createDefaultCalendar($identityUserId);
+    }
+
+    /**
+     * Strict exact-or-case-insensitive name lookup: null when the member has no calendar by
+     * that name, never a silent substitute. Unlike resolveCalendarId() (which exists to pick
+     * *some* calendar for a brand-new object), this is for an edit naming a calendar the member
+     * expects to already exist -- an unknown name must be rejected by the caller, not quietly
+     * swapped for the first calendar on the list.
+     */
+    public function findCalendarIdByName(string $identityUserId, string $name): ?int
+    {
+        foreach ($this->calendars($identityUserId) as $calendar) {
+            if (strcasecmp((string) $calendar['name'], $name) === 0) {
+                return (int) $calendar['id'];
+            }
+        }
+        return null;
     }
 
     /**

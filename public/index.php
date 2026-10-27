@@ -363,8 +363,18 @@ $router->post('/time/call', static function () use ($config): void {
             $newStart = new DateTimeImmutable($fields['starts_at'], $durationZone);
             $fields['ends_at'] = $newStart->add($oldStart->diff($oldEnd))->format('Y-m-d H:i:s');
         }
-        if (array_key_exists('calendar', $content)) {
-            $fields['calendar_id'] = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+        // A blank or omitted calendar preserves the event's current calendar membership --
+        // CalendarStore::update()'s merge already does this as long as $fields doesn't set
+        // calendar_id at all. A named calendar must already exist: an unknown name is a
+        // mistake the caller should be told about, not silently swapped for another calendar.
+        $calendarName = cleanOptionalString($content['calendar'] ?? null);
+        if ($calendarName !== null) {
+            $calendarId = $store->findCalendarIdByName($memberId, $calendarName);
+            if ($calendarId === null) {
+                timeServiceDatasetError('time.invalid_event_call', 'invalid_call', 'No calendar named "' . $calendarName . '" exists.', 422, $caller['service']);
+                return;
+            }
+            $fields['calendar_id'] = $calendarId;
         }
         try {
             $store->update($memberId, $numericId, $fields);
@@ -432,8 +442,16 @@ $router->post('/time/call', static function () use ($config): void {
                     timeServiceDatasetError('time.invalid_task_call', 'invalid_call', $error, 422, $caller['service']);
                     return;
                 }
-                if (array_key_exists('calendar', $content)) {
-                    $fields['calendar_id'] = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
+                // See the matching comment on time.event.update: blank/omitted preserves the
+                // task's current calendar; an unknown name is rejected, never substituted.
+                $calendarName = cleanOptionalString($content['calendar'] ?? null);
+                if ($calendarName !== null) {
+                    $calendarId = $store->findCalendarIdByName($memberId, $calendarName);
+                    if ($calendarId === null) {
+                        timeServiceDatasetError('time.invalid_task_call', 'invalid_call', 'No calendar named "' . $calendarName . '" exists.', 422, $caller['service']);
+                        return;
+                    }
+                    $fields['calendar_id'] = $calendarId;
                 }
                 $store->update($memberId, $numericId, $fields);
             }
@@ -2237,6 +2255,11 @@ function timeObjectActions(string $id, string $componentType, array $row): array
                 'starts_at' => timeFormatContractInstant($row['starts_at'] ?? null, false, $row['timezone'] ?? null),
                 'priority' => $row['priority'] ?? null,
                 'recurrence_rule' => $row['recurrence_rule'] ?? null,
+                // The task's current calendar, by name: a Runtime resubmitting this unchanged
+                // preserves membership (time.task.update matches it back to the same calendar);
+                // submitting it blank also preserves membership (the handler treats blank the
+                // same as omitted), so only a deliberately different name actually moves it.
+                'calendar' => (string) ($row['calendar_name'] ?? ''),
             ]],
             'availability' => 'enabled',
         ];
@@ -2273,10 +2296,7 @@ function timeObjectActions(string $id, string $componentType, array $row): array
         // values, matched to time.event.update's declared arguments -- a Runtime's generic
         // form submits every rendered field, including ones the member never touched, so an
         // empty payload here would submit blanks for them and silently clear
-        // location/description/recurrence_rule/etc. on an unrelated edit. `calendar` is
-        // deliberately omitted: timeEventFieldsFromContent() does not read it at all, so
-        // supplying a value for it here would claim a current-value mechanism for an
-        // argument the handler does not actually implement yet.
+        // location/description/recurrence_rule/etc. on an unrelated edit.
         'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.event.update', 'object_id' => $id, 'payload' => [
             'title' => (string) $row['title'],
             'timezone' => $row['timezone'] ?? null,
@@ -2292,6 +2312,9 @@ function timeObjectActions(string $id, string $componentType, array $row): array
             // string the member edits (matching content.attendees, built the same way just
             // above), never the internal JSON encoding.
             'attendees' => timeFormatAttendees($row['attendees'] ?? null),
+            // The event's current calendar, by name -- see the matching comment on
+            // time.task.update's payload above for why blank/unchanged both preserve it.
+            'calendar' => (string) ($row['calendar_name'] ?? ''),
         ]],
         'availability' => 'enabled',
     ];
