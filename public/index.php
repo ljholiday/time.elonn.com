@@ -306,6 +306,11 @@ $router->post('/time/call', static function () use ($config): void {
             timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $error, 422, $caller['service']);
             return;
         }
+        $intervalError = timeValidateEventInterval($fields, null, $defaultTimezone);
+        if ($intervalError !== null) {
+            timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $intervalError, 422, $caller['service']);
+            return;
+        }
         $fields['calendar_id'] = $calendarId;
         try {
             $created = $store->create($memberId, $fields);
@@ -362,6 +367,11 @@ $router->post('/time/call', static function () use ($config): void {
             $oldEnd = new DateTimeImmutable((string) $existing['ends_at']);
             $newStart = new DateTimeImmutable($fields['starts_at'], $durationZone);
             $fields['ends_at'] = $newStart->add($oldStart->diff($oldEnd))->format('Y-m-d H:i:s');
+        }
+        $intervalError = timeValidateEventInterval($fields, $existing, $defaultTimezone);
+        if ($intervalError !== null) {
+            timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $intervalError, 422, $caller['service']);
+            return;
         }
         // A blank or omitted calendar preserves the event's current calendar membership --
         // CalendarStore::update()'s merge already does this as long as $fields doesn't set
@@ -1759,6 +1769,44 @@ function timeEventFieldsFromContent(array $content, bool $requireCore, string $d
     }
 
     return [$fields, null];
+}
+
+/**
+ * Validates the *complete* effective interval of a VEVENT: starts_at/ends_at after combining
+ * whatever the Call actually submits ($fields, from timeEventFieldsFromContent()) with
+ * whatever the object already has ($existing, from CalendarStore::find() -- null for a
+ * create, which has nothing to combine with since timeEventFieldsFromContent() with
+ * requireCore=true always already fills in both sides). Validating $fields in isolation would
+ * miss a partial update that only moves one side of the interval past the other -- e.g.
+ * submitting only a new ends_at that falls before the event's existing, untouched starts_at.
+ *
+ * Deliberately does not change how a missing end is filled in: create's own
+ * starts_at+1-hour default and update's own duration-preserving logic (when starts_at moves
+ * without an explicit ends_at) both run first and already guarantee ends_at > starts_at in
+ * their own cases, so this never rejects either of those intended behaviors -- it only catches
+ * genuinely inverted intervals.
+ *
+ * @param array<string, mixed> $fields
+ * @param array<string, mixed>|null $existing
+ */
+function timeValidateEventInterval(array $fields, ?array $existing, string $defaultTimezone): ?string
+{
+    $zone = new DateTimeZone((string) ($fields['timezone'] ?? $defaultTimezone));
+    $resolve = static function (string $key) use ($fields, $existing, $zone): ?DateTimeImmutable {
+        if (array_key_exists($key, $fields)) {
+            return new DateTimeImmutable((string) $fields[$key], $zone);
+        }
+        $existingValue = $existing[$key] ?? null;
+        return is_string($existingValue) && trim($existingValue) !== '' ? new DateTimeImmutable($existingValue) : null;
+    };
+
+    $effectiveStartsAt = $resolve('starts_at');
+    $effectiveEndsAt = $resolve('ends_at');
+    if ($effectiveStartsAt === null || $effectiveEndsAt === null) {
+        return null;
+    }
+
+    return $effectiveEndsAt <= $effectiveStartsAt ? 'Event ends_at must be after starts_at.' : null;
 }
 
 /**
