@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 use Elonn\Time\ApiAuthClient;
 use Elonn\Time\CalendarObject;
+use Elonn\Time\CalendarObjectInput;
+use Elonn\Time\CalendarObjectPresenter;
 use Elonn\Time\CalendarStore;
 use Elonn\Time\Dav\AuthBackend as DavAuthBackend;
 use Elonn\Time\Dav\CalendarBackend as DavCalendarBackend;
@@ -202,7 +204,7 @@ $router->post('/time/call', static function () use ($config): void {
             timeServiceDatasetError('time.object_not_found', 'not_found', 'Time object was not found.', 404, $caller['service']);
             return;
         }
-        $row = timeFetchObject($pdo, $memberId, $numericId);
+        $row = CalendarObjectPresenter::fetchRow($pdo, $memberId, $numericId);
         if ($row === null) {
             timeServiceDatasetError('time.object_not_found', 'not_found', 'Time object was not found.', 404, $caller['service']);
             return;
@@ -272,8 +274,8 @@ $router->post('/time/call', static function () use ($config): void {
             timeServiceDatasetError('time.invalid_event_call', 'invalid_call', 'timezone is not valid.', 422, $caller['service']);
             return;
         }
-        $start = timeParseDateTime($content['start'] ?? null, $timezoneName);
-        $end = timeParseDateTime($content['end'] ?? null, $timezoneName);
+        $start = CalendarObjectInput::parseDateTime($content['start'] ?? null, $timezoneName);
+        $end = CalendarObjectInput::parseDateTime($content['end'] ?? null, $timezoneName);
         if ($start === null || $end === null || $end <= $start) {
             timeServiceDatasetError('time.invalid_event_call', 'invalid_call', 'start and end must be valid, and end must be after start.', 422, $caller['service']);
             return;
@@ -288,37 +290,26 @@ $router->post('/time/call', static function () use ($config): void {
             timeServiceDatasetError('time.invalid_task_call', 'invalid_call', 'status must be open, completed, or all.', 422, $caller['service']);
             return;
         }
-        $dueBefore = timeParseDateTime($content['due_before'] ?? null, null);
-        $dueAfter = timeParseDateTime($content['due_after'] ?? null, null);
+        $dueBefore = CalendarObjectInput::parseDateTime($content['due_before'] ?? null, null);
+        $dueAfter = CalendarObjectInput::parseDateTime($content['due_after'] ?? null, null);
         Response::json(timeServiceDataset(timeTaskObjects($pdo, $memberId, $status, $dueBefore, $dueAfter), 'time.tasks', $caller['service'], ''));
         return;
     }
 
     if ($operation === 'time.event.create') {
-        // Resolve the target calendar first: its own declared timezone is the documented
-        // default (help.timezone) when the Call doesn't name one explicitly, so the calendar
-        // must be known before that default can be applied.
         $store = new CalendarStore($pdo);
-        $calendarId = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
-        $defaultTimezone = $store->calendarTimezone($memberId, $calendarId) ?? 'UTC';
-        [$fields, $error] = timeEventFieldsFromContent($content, true, $defaultTimezone);
+        [$fields, $error] = CalendarObjectInput::resolveEventCreateFields($store, $memberId, $content);
         if ($error !== null) {
             timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $error, 422, $caller['service']);
             return;
         }
-        $intervalError = timeValidateEventInterval($fields, null, $defaultTimezone);
-        if ($intervalError !== null) {
-            timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $intervalError, 422, $caller['service']);
-            return;
-        }
-        $fields['calendar_id'] = $calendarId;
         try {
             $created = $store->create($memberId, $fields);
         } catch (\Throwable $throwable) {
             timeServiceDatasetError('time.validation_failed', 'invalid_call', $throwable->getMessage(), 422, $caller['service']);
             return;
         }
-        $row = timeFetchObject($pdo, $memberId, (int) $created['id']);
+        $row = CalendarObjectPresenter::fetchRow($pdo, $memberId, (int) $created['id']);
         Response::json(timeOpenDataset($row ?? [], 'time.event.create', $caller['service']));
         return;
     }
@@ -347,44 +338,10 @@ $router->post('/time/call', static function () use ($config): void {
             return;
         }
 
-        // Editing an existing event interprets any offset-less starts_at/ends_at in the
-        // event's own current zone, not a freshly-resolved calendar default -- changing which
-        // calendar an event lives in should not silently retime it.
-        $defaultTimezone = validTimezone((string) ($existing['timezone'] ?? '')) ?? 'UTC';
-        [$fields, $error] = timeEventFieldsFromContent($content, false, $defaultTimezone);
+        [$fields, $error] = CalendarObjectInput::resolveEventUpdateFields($store, $memberId, $content, $existing);
         if ($error !== null) {
             timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $error, 422, $caller['service']);
             return;
-        }
-        if (array_key_exists('starts_at', $fields) && !array_key_exists('ends_at', $fields)
-            && $existing['starts_at'] !== null && $existing['ends_at'] !== null) {
-            // $existing's instants are always ISO 8601 with an explicit UTC offset (CalendarStore::find()),
-            // so they're unambiguous; $fields['starts_at'] is a bare wall-clock string paired with
-            // $fields['timezone'] (set above whenever starts_at is), so it must be parsed with that same
-            // zone, not left to PHP's ambient default.
-            $durationZone = new DateTimeZone((string) ($fields['timezone'] ?? $defaultTimezone));
-            $oldStart = new DateTimeImmutable((string) $existing['starts_at']);
-            $oldEnd = new DateTimeImmutable((string) $existing['ends_at']);
-            $newStart = new DateTimeImmutable($fields['starts_at'], $durationZone);
-            $fields['ends_at'] = $newStart->add($oldStart->diff($oldEnd))->format('Y-m-d H:i:s');
-        }
-        $intervalError = timeValidateEventInterval($fields, $existing, $defaultTimezone);
-        if ($intervalError !== null) {
-            timeServiceDatasetError('time.invalid_event_call', 'invalid_call', $intervalError, 422, $caller['service']);
-            return;
-        }
-        // A blank or omitted calendar preserves the event's current calendar membership --
-        // CalendarStore::update()'s merge already does this as long as $fields doesn't set
-        // calendar_id at all. A named calendar must already exist: an unknown name is a
-        // mistake the caller should be told about, not silently swapped for another calendar.
-        $calendarName = cleanOptionalString($content['calendar'] ?? null);
-        if ($calendarName !== null) {
-            $calendarId = $store->findCalendarIdByName($memberId, $calendarName);
-            if ($calendarId === null) {
-                timeServiceDatasetError('time.invalid_event_call', 'invalid_call', 'No calendar named "' . $calendarName . '" exists.', 422, $caller['service']);
-                return;
-            }
-            $fields['calendar_id'] = $calendarId;
         }
         try {
             $store->update($memberId, $numericId, $fields);
@@ -395,29 +352,25 @@ $router->post('/time/call', static function () use ($config): void {
             timeServiceDatasetError('time.validation_failed', 'invalid_call', $throwable->getMessage(), 422, $caller['service']);
             return;
         }
-        $row = timeFetchObject($pdo, $memberId, $numericId);
+        $row = CalendarObjectPresenter::fetchRow($pdo, $memberId, $numericId);
         Response::json(timeOpenDataset($row ?? [], 'time.event.update', $caller['service']));
         return;
     }
 
     if ($operation === 'time.task.create') {
         $store = new CalendarStore($pdo);
-        $calendarId = $store->resolveCalendarId($memberId, cleanOptionalString($content['calendar'] ?? null));
-        $defaultTimezone = $store->calendarTimezone($memberId, $calendarId) ?? 'UTC';
-        [$fields, $error] = timeTaskFieldsFromContent($content, true, $defaultTimezone);
+        [$fields, $error] = CalendarObjectInput::resolveTaskCreateFields($store, $memberId, $content);
         if ($error !== null) {
             timeServiceDatasetError('time.invalid_task_call', 'invalid_call', $error, 422, $caller['service']);
             return;
         }
-        $fields['component_type'] = 'VTODO';
-        $fields['calendar_id'] = $calendarId;
         try {
             $created = $store->create($memberId, $fields);
         } catch (\Throwable $throwable) {
             timeServiceDatasetError('time.validation_failed', 'invalid_call', $throwable->getMessage(), 422, $caller['service']);
             return;
         }
-        $row = timeFetchObject($pdo, $memberId, (int) $created['id']);
+        $row = CalendarObjectPresenter::fetchRow($pdo, $memberId, (int) $created['id']);
         Response::json(timeOpenDataset($row ?? [], 'time.task.create', $caller['service']));
         return;
     }
@@ -446,22 +399,10 @@ $router->post('/time/call', static function () use ($config): void {
             } elseif ($operation === 'time.task.reopen') {
                 $store->reopen($memberId, $numericId);
             } else {
-                $defaultTimezone = validTimezone((string) ($existing['timezone'] ?? '')) ?? 'UTC';
-                [$fields, $error] = timeTaskFieldsFromContent($content, false, $defaultTimezone);
+                [$fields, $error] = CalendarObjectInput::resolveTaskUpdateFields($store, $memberId, $content, $existing);
                 if ($error !== null) {
                     timeServiceDatasetError('time.invalid_task_call', 'invalid_call', $error, 422, $caller['service']);
                     return;
-                }
-                // See the matching comment on time.event.update: blank/omitted preserves the
-                // task's current calendar; an unknown name is rejected, never substituted.
-                $calendarName = cleanOptionalString($content['calendar'] ?? null);
-                if ($calendarName !== null) {
-                    $calendarId = $store->findCalendarIdByName($memberId, $calendarName);
-                    if ($calendarId === null) {
-                        timeServiceDatasetError('time.invalid_task_call', 'invalid_call', 'No calendar named "' . $calendarName . '" exists.', 422, $caller['service']);
-                        return;
-                    }
-                    $fields['calendar_id'] = $calendarId;
                 }
                 $store->update($memberId, $numericId, $fields);
             }
@@ -472,7 +413,7 @@ $router->post('/time/call', static function () use ($config): void {
             timeServiceDatasetError('time.validation_failed', 'invalid_call', $throwable->getMessage(), 422, $caller['service']);
             return;
         }
-        $row = timeFetchObject($pdo, $memberId, $numericId);
+        $row = CalendarObjectPresenter::fetchRow($pdo, $memberId, $numericId);
         Response::json(timeOpenDataset($row ?? [], $operation, $caller['service']));
         return;
     }
@@ -1643,25 +1584,6 @@ function timeRecentObjects(PDO $pdo, string $memberId, int $limit): array
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-/** @return array<string, mixed>|null */
-function timeFetchObject(PDO $pdo, string $memberId, int $id): ?array
-{
-    $stmt = $pdo->prepare(
-        'SELECT o.id, o.identity_user_id, o.calendar_id, o.uri, o.uid, o.component_type, o.title, o.description, o.location,
-                o.starts_at, o.ends_at, o.due_at, o.completed_at, o.timezone, o.all_day, o.status, o.priority,
-                o.recurrence_rule, o.attendees, o.source_service, o.source_object_type, o.source_object_id, o.source_url, o.created_at, o.updated_at,
-                c.name AS calendar_name,
-                1.0 AS search_confidence
-         FROM time_calendar_objects o
-         INNER JOIN time_calendars c ON c.id = o.calendar_id
-         WHERE o.id = :id AND o.identity_user_id = :member_id AND o.status <> "deleted" AND c.status = "active"'
-    );
-    $stmt->execute(['id' => $id, 'member_id' => $memberId]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    return $row === false ? null : $row;
-}
-
 /** A Dataset action's object_id is always "time.calendar_object:<numeric id>" -- parse that back out. */
 function timeCalendarObjectIdFrom(mixed $objectId): ?int
 {
@@ -1674,207 +1596,6 @@ function timeCalendarIdFrom(mixed $objectId): ?int
 {
     $parts = explode(':', trim((string) $objectId), 2);
     return $parts[0] === 'time.calendar' ? positiveInt($parts[1] ?? null) : null;
-}
-
-function timeParseDateTime(mixed $value, ?string $timezone): ?DateTimeImmutable
-{
-    $text = trim((string) $value);
-    if ($text === '') {
-        return null;
-    }
-    try {
-        $zone = ($timezone !== null && $timezone !== '') ? new DateTimeZone($timezone) : null;
-        return new DateTimeImmutable($text, $zone);
-    } catch (\Throwable) {
-        return null;
-    }
-}
-
-/**
- * Builds the field set CalendarStore::create()/update() expect from a time.event.* Call's
- * content, validating along the way. $requireCore is true for time.event.create (title and
- * starts_at must be present; ends_at defaults to starts_at + 1 hour) and false for
- * time.event.update (every field is optional; only the keys present in $content are returned,
- * so CalendarStore::update()'s merge leaves everything else untouched).
- *
- * Date/timezone contract: starts_at/ends_at are ISO 8601 and may carry their own UTC offset
- * (help.starts_at's documented shape); that offset is always honored over everything else, per
- * "preserve offsets or convert explicitly." $defaultTimezone is the zone used only when a value
- * carries no offset of its own -- the caller resolves this *after* picking the target calendar
- * (its own declared zone, or UTC) for a create, or the existing object's current zone for an
- * update, never a guess made before the calendar is known. CalendarObject::build() expects a
- * bare wall-clock string paired with a 'timezone' field naming the zone those digits are in, so
- * every parsed instant is explicitly converted into $defaultTimezone before formatting, rather
- * than formatted in whatever zone happened to survive parsing.
- *
- * @param array<string, mixed> $content
- * @return array{0: array<string, mixed>, 1: ?string}
- */
-function timeEventFieldsFromContent(array $content, bool $requireCore, string $defaultTimezone): array
-{
-    $fields = [];
-
-    if (array_key_exists('title', $content)) {
-        $title = trim((string) $content['title']);
-        if ($title === '') {
-            return [[], 'title cannot be empty.'];
-        }
-        $fields['title'] = $title;
-    } elseif ($requireCore) {
-        return [[], 'title is required.'];
-    }
-
-    $timezoneInput = cleanOptionalString($content['timezone'] ?? null);
-    if ($timezoneInput !== null && validTimezone($timezoneInput) === null) {
-        return [[], 'timezone is not valid.'];
-    }
-    $effectiveTimezone = $timezoneInput ?? $defaultTimezone;
-    if ($timezoneInput !== null || $requireCore) {
-        // An explicit override always sticks; a brand-new object must always declare a zone
-        // (its own default or UTC) since none exists yet to fall back on.
-        $fields['timezone'] = $effectiveTimezone;
-    }
-    $effectiveZone = new DateTimeZone($effectiveTimezone);
-
-    $allDay = array_key_exists('all_day', $content) ? truthy($content['all_day']) : null;
-    if ($allDay !== null) {
-        $fields['all_day'] = $allDay ? 1 : 0;
-    }
-
-    $startsAt = null;
-    if (array_key_exists('starts_at', $content)) {
-        $startsAt = timeParseDateTime($content['starts_at'], $effectiveTimezone);
-        if ($startsAt === null) {
-            return [[], 'starts_at is not a valid date/time.'];
-        }
-        $fields['starts_at'] = $startsAt->setTimezone($effectiveZone)->format('Y-m-d H:i:s');
-    } elseif ($requireCore) {
-        return [[], 'starts_at is required.'];
-    }
-
-    $endsAtRaw = cleanOptionalString($content['ends_at'] ?? null);
-    if ($endsAtRaw !== null) {
-        $endsAt = timeParseDateTime($endsAtRaw, $effectiveTimezone);
-        if ($endsAt === null) {
-            return [[], 'ends_at is not a valid date/time.'];
-        }
-        $fields['ends_at'] = $endsAt->setTimezone($effectiveZone)->format('Y-m-d H:i:s');
-    } elseif ($requireCore && $startsAt !== null) {
-        $fields['ends_at'] = $startsAt->modify('+1 hour')->setTimezone($effectiveZone)->format('Y-m-d H:i:s');
-    }
-
-    foreach (['location', 'description', 'recurrence_rule', 'attendees'] as $key) {
-        if (array_key_exists($key, $content)) {
-            $value = trim((string) $content[$key]);
-            $fields[$key] = $value === '' ? null : $value;
-        }
-    }
-
-    return [$fields, null];
-}
-
-/**
- * Validates the *complete* effective interval of a VEVENT: starts_at/ends_at after combining
- * whatever the Call actually submits ($fields, from timeEventFieldsFromContent()) with
- * whatever the object already has ($existing, from CalendarStore::find() -- null for a
- * create, which has nothing to combine with since timeEventFieldsFromContent() with
- * requireCore=true always already fills in both sides). Validating $fields in isolation would
- * miss a partial update that only moves one side of the interval past the other -- e.g.
- * submitting only a new ends_at that falls before the event's existing, untouched starts_at.
- *
- * Deliberately does not change how a missing end is filled in: create's own
- * starts_at+1-hour default and update's own duration-preserving logic (when starts_at moves
- * without an explicit ends_at) both run first and already guarantee ends_at > starts_at in
- * their own cases, so this never rejects either of those intended behaviors -- it only catches
- * genuinely inverted intervals.
- *
- * @param array<string, mixed> $fields
- * @param array<string, mixed>|null $existing
- */
-function timeValidateEventInterval(array $fields, ?array $existing, string $defaultTimezone): ?string
-{
-    $zone = new DateTimeZone((string) ($fields['timezone'] ?? $defaultTimezone));
-    $resolve = static function (string $key) use ($fields, $existing, $zone): ?DateTimeImmutable {
-        if (array_key_exists($key, $fields)) {
-            return new DateTimeImmutable((string) $fields[$key], $zone);
-        }
-        $existingValue = $existing[$key] ?? null;
-        return is_string($existingValue) && trim($existingValue) !== '' ? new DateTimeImmutable($existingValue) : null;
-    };
-
-    $effectiveStartsAt = $resolve('starts_at');
-    $effectiveEndsAt = $resolve('ends_at');
-    if ($effectiveStartsAt === null || $effectiveEndsAt === null) {
-        return null;
-    }
-
-    return $effectiveEndsAt <= $effectiveStartsAt ? 'Event ends_at must be after starts_at.' : null;
-}
-
-/**
- * Same shape as timeEventFieldsFromContent(), for time.task.create / time.task.update. Tasks
- * have no 'timezone' Contract argument of their own, but due_at/starts_at still need a zone to
- * interpret an offset-less value and to pair with the naive string CalendarObject::build()
- * expects -- see timeEventFieldsFromContent()'s doc comment for the full contract.
- *
- * @param array<string, mixed> $content
- * @return array{0: array<string, mixed>, 1: ?string}
- */
-function timeTaskFieldsFromContent(array $content, bool $requireCore, string $defaultTimezone): array
-{
-    $fields = [];
-
-    if (array_key_exists('title', $content)) {
-        $title = trim((string) $content['title']);
-        if ($title === '') {
-            return [[], 'title cannot be empty.'];
-        }
-        $fields['title'] = $title;
-    } elseif ($requireCore) {
-        return [[], 'title is required.'];
-    }
-
-    if ($requireCore) {
-        $fields['timezone'] = $defaultTimezone;
-    }
-    $effectiveZone = new DateTimeZone($defaultTimezone);
-
-    foreach (['due_at', 'starts_at'] as $key) {
-        if (!array_key_exists($key, $content)) {
-            continue;
-        }
-        $raw = cleanOptionalString($content[$key] ?? null);
-        if ($raw === null) {
-            $fields[$key] = null;
-            continue;
-        }
-        $parsed = timeParseDateTime($raw, $defaultTimezone);
-        if ($parsed === null) {
-            return [[], $key . ' is not a valid date/time.'];
-        }
-        $fields[$key] = $parsed->setTimezone($effectiveZone)->format('Y-m-d H:i:s');
-    }
-
-    if (array_key_exists('priority', $content)) {
-        if ($content['priority'] === null || $content['priority'] === '') {
-            $fields['priority'] = null;
-        } else {
-            $priority = (int) $content['priority'];
-            if ($priority < 0 || $priority > 9) {
-                return [[], 'priority must be between 0 and 9.'];
-            }
-            $fields['priority'] = $priority;
-        }
-    }
-
-    foreach (['description', 'recurrence_rule'] as $key) {
-        if (array_key_exists($key, $content)) {
-            $value = trim((string) $content[$key]);
-            $fields[$key] = $value === '' ? null : $value;
-        }
-    }
-
-    return [$fields, null];
 }
 
 /** @return array<int, array<string, mixed>> */
@@ -1963,48 +1684,6 @@ function timeTaskObjects(PDO $pdo, string $memberId, string $status, ?DateTimeIm
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-/**
- * The real actions every Time calendar carries: Edit is always offered (renaming, recoloring, or
- * re-timezoning a Social mirror calendar is still the member's own local preference); Delete is
- * withheld for a Social-owned mirror calendar, which CalendarStore::deleteCalendar() refuses
- * server-side -- withholding the action here just keeps the Dashboard from offering one that
- * would fail.
- *
- * @return array<int, array<string, mixed>>
- */
-function timeCalendarObjectActions(string $id, array $calendar): array
-{
-    $actions = [[
-        'id' => 'update_calendar',
-        'type' => 'update_object',
-        'label' => 'Edit',
-        // dev.elonn canonical/action.md, Initial values: the calendar's own current
-        // name/description/color/timezone, matched to time.calendar.update's declared
-        // arguments -- a Runtime's generic form submits every rendered field, including ones
-        // the member never touched, so an empty payload here would submit blanks for them
-        // and silently clear description/color/timezone on an unrelated edit.
-        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.calendar.update', 'object_id' => $id, 'payload' => [
-            'name' => (string) $calendar['name'],
-            'description' => $calendar['description'],
-            'color' => $calendar['color'],
-            'timezone' => $calendar['timezone'],
-        ]],
-        'availability' => 'enabled',
-    ]];
-
-    if (($calendar['deletable'] ?? true) === true) {
-        $actions[] = [
-            'id' => 'delete_calendar',
-            'type' => 'delete_object',
-            'label' => 'Delete',
-            'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.calendar.delete', 'object_id' => $id, 'payload' => []],
-            'availability' => 'enabled',
-        ];
-    }
-
-    return $actions;
-}
-
 /** @param array<int, array<string, mixed>> $calendar @return array<string, mixed> */
 function timeCalendarObject(array $calendar): array
 {
@@ -2033,7 +1712,7 @@ function timeCalendarObject(array $calendar): array
         'content' => $content,
         'permissions' => ['can_view' => true, 'can_act' => true, 'can_share' => false],
         'resources' => [],
-        'actions' => ['local' => timeCalendarObjectActions($id, $calendar), 'inbound' => [], 'outbound' => []],
+        'actions' => ['local' => CalendarObjectPresenter::actionsForCalendar($id, $calendar), 'inbound' => [], 'outbound' => []],
         'relationships' => [],
         'metadata' => ['service' => 'time', 'source_id' => (string) $calendar['id']],
     ];
@@ -2100,27 +1779,6 @@ function timeOpenDataset(array $row, string $operation, string $caller): array
     ];
 }
 
-/**
- * Formats a stored instant (always a UTC-naive 'Y-m-d H:i:s' string, per the storage
- * convention CalendarObject::parse() and CalendarStore::payload() both use) for the Contract
- * boundary. An all-day value carries no time-of-day or zone of its own, so it becomes a bare
- * 'Y-m-d' date; a timed value becomes an ISO 8601 datetime with an explicit offset, expressed
- * in the object's own declared timezone (falling back to UTC) so a caller sees the same local
- * time the event was created or last edited in.
- */
-function timeFormatContractInstant(mixed $storedUtc, bool $allDay, mixed $timezone): ?string
-{
-    if (!is_string($storedUtc) || trim($storedUtc) === '') {
-        return null;
-    }
-    if ($allDay) {
-        return substr($storedUtc, 0, 10);
-    }
-    $zoneName = is_string($timezone) ? validTimezone($timezone) : null;
-    $date = new DateTimeImmutable($storedUtc, new DateTimeZone('UTC'));
-    return $date->setTimezone(new DateTimeZone($zoneName ?? 'UTC'))->format(DATE_ATOM);
-}
-
 /** @param array<string, mixed> $row @return array<string, mixed> */
 function timeObjectFromRow(array $row): array
 {
@@ -2134,16 +1792,16 @@ function timeObjectFromRow(array $row): array
     $content = [
         'component_type' => $componentType,
         'location' => $row['location'] ?? null,
-        'starts_at' => timeFormatContractInstant($row['occurrence_start'] ?? $row['starts_at'] ?? null, $allDay, $timezone),
-        'ends_at' => timeFormatContractInstant($row['occurrence_end'] ?? $row['ends_at'] ?? null, $allDay, $timezone),
-        'due_at' => timeFormatContractInstant($row['due_at'] ?? null, $allDay, $timezone),
-        'completed_at' => timeFormatContractInstant($row['completed_at'] ?? null, false, $timezone),
+        'starts_at' => CalendarObjectPresenter::formatInstant($row['occurrence_start'] ?? $row['starts_at'] ?? null, $allDay, $timezone),
+        'ends_at' => CalendarObjectPresenter::formatInstant($row['occurrence_end'] ?? $row['ends_at'] ?? null, $allDay, $timezone),
+        'due_at' => CalendarObjectPresenter::formatInstant($row['due_at'] ?? null, $allDay, $timezone),
+        'completed_at' => CalendarObjectPresenter::formatInstant($row['completed_at'] ?? null, false, $timezone),
         'all_day' => $allDay,
         'status' => (string) ($row['status'] ?? ''),
         'priority' => $row['priority'] ?? null,
         'recurrence_rule' => $row['recurrence_rule'] ?? null,
         'calendar' => (string) ($row['calendar_name'] ?? ''),
-        'attendees' => timeFormatAttendees($row['attendees'] ?? null),
+        'attendees' => CalendarObjectPresenter::formatAttendees($row['attendees'] ?? null),
         'source' => [
             'service' => $row['source_service'] ?? null,
             'object_type' => $row['source_object_type'] ?? null,
@@ -2176,7 +1834,7 @@ function timeObjectFromRow(array $row): array
         'permissions' => ['can_view' => true, 'can_act' => true, 'can_share' => false],
         'resources' => $sourceUrl !== '' ? ['resource:' . $id . ':source'] : [],
         'actions' => [
-            'local' => timeObjectActions($id, $componentType, $row),
+            'local' => CalendarObjectPresenter::actionsForObject($id, $componentType, $row),
             'inbound' => [],
             'outbound' => [],
         ],
@@ -2186,38 +1844,10 @@ function timeObjectFromRow(array $row): array
 }
 
 /**
- * Renders a stored attendees JSON payload back into the same comma-separated
- * "Name <email>" / bare-email string shape the Contract's `attendees` argument
- * accepts, so a generic Runtime form prefills with editable text, not raw JSON.
- */
-function timeFormatAttendees(mixed $value): string
-{
-    if (!is_string($value) || trim($value) === '') {
-        return '';
-    }
-    $decoded = json_decode($value, true);
-    if (!is_array($decoded)) {
-        return '';
-    }
-    $parts = [];
-    foreach ($decoded as $attendee) {
-        if (!is_array($attendee)) {
-            continue;
-        }
-        $email = trim((string) ($attendee['email'] ?? ''));
-        if ($email === '') {
-            continue;
-        }
-        $name = trim((string) ($attendee['name'] ?? ''));
-        $parts[] = $name !== '' ? $name . ' <' . $email . '>' : $email;
-    }
-    return implode(', ', $parts);
-}
-
-/**
  * Human-readable instant text for a calendar object's Body (dev.elonn canonical/object.md,
  * Content body), reusing the already-formatted content.starts_at/ends_at/due_at the Head
- * fields already carry (timeFormatContractInstant()) rather than re-deriving from raw storage.
+ * fields already carry (CalendarObjectPresenter::formatInstant()) rather than re-deriving from
+ * raw storage.
  */
 function timeFormatHumanInstant(string $iso, bool $dateOnly): string
 {
@@ -2514,120 +2144,6 @@ function timeServiceDataset(array $rows, string $operation, string $caller, stri
  * @param array<string, mixed> $row
  * @return array<int, array<string, mixed>>
  */
-function timeObjectActions(string $id, string $componentType, array $row): array
-{
-    $actions = [[
-        'id' => 'open_time_object',
-        'type' => 'open_object',
-        'label' => 'Open',
-        'operation_invocation' => [
-            'service' => 'time.elonn',
-            'operation' => 'time.open',
-            'object_id' => $id,
-            'payload' => [],
-        ],
-        'availability' => 'enabled',
-    ]];
-
-    if (($row['source_service'] ?? null) === 'social') {
-        return $actions;
-    }
-
-    if ($componentType === 'VTODO') {
-        $isCompleted = ($row['completed_at'] ?? null) !== null || strtolower((string) ($row['status'] ?? '')) === 'completed';
-        $actions[] = [
-            'id' => 'update_task',
-            'type' => 'update_object',
-            'label' => 'Edit',
-            // dev.elonn canonical/action.md, Initial values: the task's own current field
-            // values, matched to time.task.update's declared arguments -- a Runtime's
-            // generic form submits every rendered field, including ones the member never
-            // touched, so an empty payload here would submit blanks for them and silently
-            // clear description/due_at/priority/etc. on an unrelated edit.
-            'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.update', 'object_id' => $id, 'payload' => [
-                'title' => (string) $row['title'],
-                'description' => $row['description'] ?? null,
-                // timeFormatContractInstant(), not the raw stored UTC-naive string: a Runtime
-                // that resubmits this value unchanged would otherwise have it reinterpreted as
-                // wall-clock-in-the-task's-own-zone by timeTaskFieldsFromContent(), shifting
-                // the real instant by that zone's offset on every untouched save.
-                'due_at' => timeFormatContractInstant($row['due_at'] ?? null, false, $row['timezone'] ?? null),
-                'starts_at' => timeFormatContractInstant($row['starts_at'] ?? null, false, $row['timezone'] ?? null),
-                'priority' => $row['priority'] ?? null,
-                'recurrence_rule' => $row['recurrence_rule'] ?? null,
-                // The task's current calendar, by name: a Runtime resubmitting this unchanged
-                // preserves membership (time.task.update matches it back to the same calendar);
-                // submitting it blank also preserves membership (the handler treats blank the
-                // same as omitted), so only a deliberately different name actually moves it.
-                'calendar' => (string) ($row['calendar_name'] ?? ''),
-            ]],
-            'availability' => 'enabled',
-        ];
-        $actions[] = $isCompleted
-            ? [
-                'id' => 'reopen_task',
-                'type' => 'reopen_task',
-                'label' => 'Reopen',
-                'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.reopen', 'object_id' => $id, 'payload' => []],
-                'availability' => 'enabled',
-            ]
-            : [
-                'id' => 'complete_task',
-                'type' => 'complete_task',
-                'label' => 'Complete',
-                'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.complete', 'object_id' => $id, 'payload' => []],
-                'availability' => 'enabled',
-            ];
-        $actions[] = [
-            'id' => 'delete_task',
-            'type' => 'delete_object',
-            'label' => 'Delete',
-            'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.task.delete', 'object_id' => $id, 'payload' => []],
-            'availability' => 'enabled',
-        ];
-        return $actions;
-    }
-
-    $actions[] = [
-        'id' => 'update_event',
-        'type' => 'update_object',
-        'label' => 'Edit',
-        // dev.elonn canonical/action.md, Initial values: the event's own current field
-        // values, matched to time.event.update's declared arguments -- a Runtime's generic
-        // form submits every rendered field, including ones the member never touched, so an
-        // empty payload here would submit blanks for them and silently clear
-        // location/description/recurrence_rule/etc. on an unrelated edit.
-        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.event.update', 'object_id' => $id, 'payload' => [
-            'title' => (string) $row['title'],
-            'timezone' => $row['timezone'] ?? null,
-            // timeFormatContractInstant(), not the raw stored UTC-naive string -- see the
-            // matching comment on time.task.update's payload just above.
-            'starts_at' => timeFormatContractInstant($row['occurrence_start'] ?? $row['starts_at'] ?? null, truthy($row['all_day'] ?? false), $row['timezone'] ?? null),
-            'ends_at' => timeFormatContractInstant($row['occurrence_end'] ?? $row['ends_at'] ?? null, truthy($row['all_day'] ?? false), $row['timezone'] ?? null),
-            'all_day' => truthy($row['all_day'] ?? false),
-            'location' => $row['location'] ?? null,
-            'description' => $row['description'] ?? null,
-            'recurrence_rule' => $row['recurrence_rule'] ?? null,
-            // timeFormatAttendees(), not the raw stored value: the argument is the plain
-            // string the member edits (matching content.attendees, built the same way just
-            // above), never the internal JSON encoding.
-            'attendees' => timeFormatAttendees($row['attendees'] ?? null),
-            // The event's current calendar, by name -- see the matching comment on
-            // time.task.update's payload above for why blank/unchanged both preserve it.
-            'calendar' => (string) ($row['calendar_name'] ?? ''),
-        ]],
-        'availability' => 'enabled',
-    ];
-    $actions[] = [
-        'id' => 'delete_event',
-        'type' => 'delete_object',
-        'label' => 'Delete',
-        'operation_invocation' => ['service' => 'time.elonn', 'operation' => 'time.event.delete', 'object_id' => $id, 'payload' => []],
-        'availability' => 'enabled',
-    ];
-    return $actions;
-}
-
 /**
  * @param array<int, array<string, mixed>> $objects
  * @return array<int, array<string, mixed>>

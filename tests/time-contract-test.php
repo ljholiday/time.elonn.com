@@ -9,6 +9,8 @@ use Elonn\Time\ServiceDescriptor;
 $root = dirname(__DIR__);
 $public = file_get_contents($root . '/public/index.php') ?: '';
 $store = file_get_contents($root . '/src/CalendarStore.php') ?: '';
+$input = file_get_contents($root . '/src/CalendarObjectInput.php') ?: '';
+$presenter = file_get_contents($root . '/src/CalendarObjectPresenter.php') ?: '';
 $runtimePanelRoute = '/runtime/' . 'panel/time';
 $worldPanelRoute = '/world/' . 'panels/time';
 $descriptor = ServiceDescriptor::payload();
@@ -106,11 +108,13 @@ $checks = [
         && str_contains($public, "'time.calendar.delete'")
         && str_contains($public, 'function timeAgendaObjects(')
         && str_contains($public, 'function timeTaskObjects(')
-        && str_contains($public, 'resolveCalendarId('),
+        && str_contains($input, 'function resolveEventCreateFields(')
+        && str_contains($input, 'function resolveTaskCreateFields(')
+        && str_contains($store, 'function resolveCalendarId('),
     'Every Time calendar carries a real Edit action, and Delete only when deletable' =>
-        str_contains($public, 'function timeCalendarObjectActions(')
-        && str_contains($public, "'operation' => 'time.calendar.update'")
-        && str_contains($public, "'operation' => 'time.calendar.delete'")
+        str_contains($presenter, 'function actionsForCalendar(')
+        && str_contains($presenter, "'operation' => 'time.calendar.update'")
+        && str_contains($presenter, "'operation' => 'time.calendar.delete'")
         && str_contains($store, 'function updateCalendar(')
         && str_contains($store, 'function deleteCalendar(')
         && str_contains($store, 'The Social mirror calendar cannot be deleted from Time.'),
