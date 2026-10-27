@@ -151,12 +151,62 @@ try {
         $checks['updateCalendar() rejects an empty name'] = true;
     }
 
+    // Deletion followed by retrieval, and the default-calendar URI collision (fix for
+    // time.default_calendar_recreate_after_soft_delete_bug_20260917): a calendar's own
+    // deletion is a soft status flip, not a hard delete, and never touches the
+    // calendar_objects it still owns -- so once it's deleted, every one of those objects must
+    // become unreachable through find(), and the member having "no active calendar" again must
+    // produce a genuinely new, separate default calendar rather than reactivating the deleted
+    // one (which would silently resurrect the orphaned object below) or colliding with its
+    // still-present (identity_user_id, uri) = (*, 'default') row.
+    $survivingObject = $store->create($identityUserId, [
+        'component_type' => 'VTODO',
+        'title' => 'Orphaned by calendar deletion',
+        'calendar_id' => $calendarId,
+    ]);
+
     $store->deleteCalendar($identityUserId, $calendarId);
     $checks['deleteCalendar() removes an ordinary calendar'] = !in_array(
         $calendarId,
         array_map(static fn (array $c): int => $c['id'], $store->calendars($identityUserId)),
         true
     );
+    $checks['find() cannot retrieve an object whose calendar was just deleted'] =
+        $store->find($identityUserId, (int) $survivingObject['id']) === null;
+
+    $newDefaultCalendarId = $store->resolveCalendarId($identityUserId, null);
+    $checks['resolveCalendarId() creates a new default calendar once none are active, not the same deleted row'] =
+        $newDefaultCalendarId > 0 && $newDefaultCalendarId !== $calendarId;
+    $checks['the new default calendar is active and does not resurrect the deleted calendar\'s object'] = (static function () use ($store, $identityUserId, $newDefaultCalendarId, $survivingObject): bool {
+        $calendars = $store->calendars($identityUserId);
+        $newCalendar = null;
+        foreach ($calendars as $calendar) {
+            if ((int) $calendar['id'] === $newDefaultCalendarId) {
+                $newCalendar = $calendar;
+            }
+        }
+        return $newCalendar !== null
+            && $newCalendar['name'] === 'Calendar'
+            && $store->find($identityUserId, (int) $survivingObject['id']) === null;
+    })();
+    $checks['the deleted calendar\'s uri collision is resolved by a genuinely new row, both rows persist'] = (static function () use ($pdo, $identityUserId, $calendarId, $newDefaultCalendarId): bool {
+        $stmt = $pdo->prepare('SELECT id, uri, status FROM time_calendars WHERE identity_user_id = :id');
+        $stmt->execute(['id' => $identityUserId]);
+        $rows = $stmt->fetchAll();
+        $oldRow = null;
+        $newRow = null;
+        foreach ($rows as $row) {
+            if ((int) $row['id'] === $calendarId) {
+                $oldRow = $row;
+            }
+            if ((int) $row['id'] === $newDefaultCalendarId) {
+                $newRow = $row;
+            }
+        }
+        return $oldRow !== null && $oldRow['status'] === 'deleted'
+            && $newRow !== null && $newRow['status'] === 'active'
+            && $oldRow['uri'] !== $newRow['uri'];
+    })();
 
     $socialCalendarId = $store->resolveCalendarId($socialGuardIdentityUserId, null);
     $pdo->prepare('UPDATE time_calendars SET source_service = :source WHERE id = :id')

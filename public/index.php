@@ -1597,6 +1597,7 @@ function timeSearchObjects(PDO $pdo, string $memberId, string $text, int $limit)
          INNER JOIN time_calendars c ON c.id = o.calendar_id
          WHERE o.identity_user_id = :member_id
            AND o.status <> "deleted"
+           AND c.status = "active"
            AND (
                 LOWER(o.title) LIKE :title_filter
                 OR LOWER(COALESCE(o.description, "")) LIKE :description_filter
@@ -1633,6 +1634,7 @@ function timeRecentObjects(PDO $pdo, string $memberId, int $limit): array
          INNER JOIN time_calendars c ON c.id = o.calendar_id
          WHERE o.identity_user_id = :member_id
            AND o.status <> "deleted"
+           AND c.status = "active"
          ORDER BY COALESCE(o.starts_at, o.due_at, o.updated_at, o.created_at) DESC, o.id DESC
          LIMIT ' . max(1, min(25, $limit))
     );
@@ -1652,7 +1654,7 @@ function timeFetchObject(PDO $pdo, string $memberId, int $id): ?array
                 1.0 AS search_confidence
          FROM time_calendar_objects o
          INNER JOIN time_calendars c ON c.id = o.calendar_id
-         WHERE o.id = :id AND o.identity_user_id = :member_id AND o.status <> "deleted"'
+         WHERE o.id = :id AND o.identity_user_id = :member_id AND o.status <> "deleted" AND c.status = "active"'
     );
     $stmt->execute(['id' => $id, 'member_id' => $memberId]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -1889,6 +1891,7 @@ function timeAgendaObjects(PDO $pdo, string $memberId, DateTimeImmutable $start,
          WHERE o.identity_user_id = :member_id
            AND o.component_type = "VEVENT"
            AND o.status <> "deleted"
+           AND c.status = "active"
            AND (
                 o.recurrence_rule IS NOT NULL
                 OR (o.starts_at IS NOT NULL AND o.starts_at < :range_end AND COALESCE(o.ends_at, o.starts_at) >= :range_start)
@@ -1937,7 +1940,7 @@ function timeTaskObjects(PDO $pdo, string $memberId, string $status, ?DateTimeIm
                    o.created_at, o.updated_at, c.name AS calendar_name, 1.0 AS search_confidence
             FROM time_calendar_objects o
             INNER JOIN time_calendars c ON c.id = o.calendar_id
-            WHERE o.identity_user_id = :member_id AND o.component_type = "VTODO" AND o.status <> "deleted"';
+            WHERE o.identity_user_id = :member_id AND o.component_type = "VTODO" AND o.status <> "deleted" AND c.status = "active"';
     $params = ['member_id' => $memberId];
 
     if ($status === 'open') {

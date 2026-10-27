@@ -214,6 +214,20 @@ final class CalendarStore
         return is_string($timezone) && trim($timezone) !== '' ? trim($timezone) : null;
     }
 
+    /**
+     * Always inserts a genuinely new, active calendar row -- never reactivates an existing one,
+     * soft-deleted or otherwise. time_calendars' unique key is (identity_user_id, uri)
+     * regardless of status, so a member's second-ever default calendar (created because their
+     * first was deleted, per resolveCalendarId()'s "no active calendar" path) would otherwise
+     * collide with the first one's still-present 'default' row. The old ON DUPLICATE KEY
+     * UPDATE id = LAST_INSERT_ID(id) resolved that collision by returning the *existing* dead
+     * row's id without reactivating it (time.default_calendar_recreate_after_soft_delete_bug_20260917)
+     * -- fixing that naively by flipping its status back to 'active' would be worse: that row's
+     * calendar_id is still attached to whatever calendar_objects it had, which were never
+     * themselves deleted, so reactivating it would silently resurrect them. A fresh row with a
+     * fresh id, and a uri that doesn't collide with any existing row for this member regardless
+     * of status, avoids both problems.
+     */
     private function createDefaultCalendar(string $identityUserId): int
     {
         $now = gmdate('Y-m-d H:i:s');
@@ -221,18 +235,35 @@ final class CalendarStore
             'INSERT INTO time_calendars
                 (identity_user_id, uri, name, components, sync_token, status, created_at)
              VALUES
-                (:identity_user_id, :uri, :name, :components, 1, :status, :created_at)
-             ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)'
+                (:identity_user_id, :uri, :name, :components, 1, :status, :created_at)'
         );
         $stmt->execute([
             'identity_user_id' => $identityUserId,
-            'uri' => 'default',
+            'uri' => $this->availableCalendarUri($identityUserId, 'default'),
             'name' => 'Calendar',
             'components' => 'VEVENT,VTODO',
             'status' => 'active',
             'created_at' => $now,
         ]);
         return (int) $this->pdo->lastInsertId();
+    }
+
+    /**
+     * A uri not already used by this member for any calendar of theirs, active or deleted.
+     */
+    private function availableCalendarUri(string $identityUserId, string $base): string
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM time_calendars WHERE identity_user_id = :identity_user_id AND uri = :uri'
+        );
+        $candidate = $base;
+        while (true) {
+            $stmt->execute(['identity_user_id' => $identityUserId, 'uri' => $candidate]);
+            if ((int) $stmt->fetchColumn() === 0) {
+                return $candidate;
+            }
+            $candidate = $base . '-' . bin2hex(random_bytes(6));
+        }
     }
 
     public function delete(string $identityUserId, int $id): void
@@ -457,7 +488,7 @@ final class CalendarStore
             'SELECT o.*, c.name AS calendar_name, c.color AS calendar_color
              FROM time_calendar_objects o
              INNER JOIN time_calendars c ON c.id = o.calendar_id
-             WHERE o.id = :id AND o.identity_user_id = :identity_user_id'
+             WHERE o.id = :id AND o.identity_user_id = :identity_user_id AND c.status = \'active\''
         );
         $stmt->execute(['id' => $id, 'identity_user_id' => $identityUserId]);
         $row = $stmt->fetch();
