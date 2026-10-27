@@ -2009,6 +2009,16 @@ function timeCalendarObjectActions(string $id, array $calendar): array
 function timeCalendarObject(array $calendar): array
 {
     $id = 'time.calendar:' . (string) $calendar['id'];
+    $content = [
+        'color' => $calendar['color'] ?? null,
+        'timezone' => $calendar['timezone'] ?? null,
+        'components' => (string) ($calendar['components'] ?? ''),
+        'source' => ($calendar['source_service'] ?? null) === null ? null : ['service' => (string) $calendar['source_service']],
+    ];
+    $bodyNodes = timeCalendarBodyNodes($content);
+    if ($bodyNodes !== []) {
+        $content['body'] = $bodyNodes;
+    }
     return [
         'id' => $id,
         'type' => 'time.calendar',
@@ -2020,12 +2030,7 @@ function timeCalendarObject(array $calendar): array
         'name' => (string) $calendar['name'],
         'summary' => '',
         'description' => (string) ($calendar['description'] ?? ''),
-        'content' => [
-            'color' => $calendar['color'] ?? null,
-            'timezone' => $calendar['timezone'] ?? null,
-            'components' => (string) ($calendar['components'] ?? ''),
-            'source' => ($calendar['source_service'] ?? null) === null ? null : ['service' => (string) $calendar['source_service']],
-        ],
+        'content' => $content,
         'permissions' => ['can_view' => true, 'can_act' => true, 'can_share' => false],
         'resources' => [],
         'actions' => ['local' => timeCalendarObjectActions($id, $calendar), 'inbound' => [], 'outbound' => []],
@@ -2126,6 +2131,36 @@ function timeObjectFromRow(array $row): array
     $allDay = truthy($row['all_day'] ?? false);
     $timezone = $row['timezone'] ?? null;
 
+    $content = [
+        'component_type' => $componentType,
+        'location' => $row['location'] ?? null,
+        'starts_at' => timeFormatContractInstant($row['occurrence_start'] ?? $row['starts_at'] ?? null, $allDay, $timezone),
+        'ends_at' => timeFormatContractInstant($row['occurrence_end'] ?? $row['ends_at'] ?? null, $allDay, $timezone),
+        'due_at' => timeFormatContractInstant($row['due_at'] ?? null, $allDay, $timezone),
+        'completed_at' => timeFormatContractInstant($row['completed_at'] ?? null, false, $timezone),
+        'all_day' => $allDay,
+        'status' => (string) ($row['status'] ?? ''),
+        'priority' => $row['priority'] ?? null,
+        'recurrence_rule' => $row['recurrence_rule'] ?? null,
+        'calendar' => (string) ($row['calendar_name'] ?? ''),
+        'attendees' => timeFormatAttendees($row['attendees'] ?? null),
+        'source' => [
+            'service' => $row['source_service'] ?? null,
+            'object_type' => $row['source_object_type'] ?? null,
+            'object_id' => $row['source_object_id'] ?? null,
+            'url' => $sourceUrl !== '' ? $sourceUrl : null,
+        ],
+        'search' => [
+            'confidence' => (float) ($row['search_confidence'] ?? 0.5),
+            'index_status' => 'ready',
+            'why' => 'Matched calendar object title, description, or location.',
+        ],
+    ];
+    $bodyNodes = timeCalendarObjectBodyNodes($content);
+    if ($bodyNodes !== []) {
+        $content['body'] = $bodyNodes;
+    }
+
     return [
         'id' => $id,
         'type' => $objectType,
@@ -2137,31 +2172,7 @@ function timeObjectFromRow(array $row): array
         'name' => '',
         'summary' => (string) $row['title'],
         'description' => (string) ($row['description'] ?? ''),
-        'content' => [
-            'component_type' => $componentType,
-            'location' => $row['location'] ?? null,
-            'starts_at' => timeFormatContractInstant($row['occurrence_start'] ?? $row['starts_at'] ?? null, $allDay, $timezone),
-            'ends_at' => timeFormatContractInstant($row['occurrence_end'] ?? $row['ends_at'] ?? null, $allDay, $timezone),
-            'due_at' => timeFormatContractInstant($row['due_at'] ?? null, $allDay, $timezone),
-            'completed_at' => timeFormatContractInstant($row['completed_at'] ?? null, false, $timezone),
-            'all_day' => $allDay,
-            'status' => (string) ($row['status'] ?? ''),
-            'priority' => $row['priority'] ?? null,
-            'recurrence_rule' => $row['recurrence_rule'] ?? null,
-            'calendar' => (string) ($row['calendar_name'] ?? ''),
-            'attendees' => timeFormatAttendees($row['attendees'] ?? null),
-            'source' => [
-                'service' => $row['source_service'] ?? null,
-                'object_type' => $row['source_object_type'] ?? null,
-                'object_id' => $row['source_object_id'] ?? null,
-                'url' => $sourceUrl !== '' ? $sourceUrl : null,
-            ],
-            'search' => [
-                'confidence' => (float) ($row['search_confidence'] ?? 0.5),
-                'index_status' => 'ready',
-                'why' => 'Matched calendar object title, description, or location.',
-            ],
-        ],
+        'content' => $content,
         'permissions' => ['can_view' => true, 'can_act' => true, 'can_share' => false],
         'resources' => $sourceUrl !== '' ? ['resource:' . $id . ':source'] : [],
         'actions' => [
@@ -2201,6 +2212,244 @@ function timeFormatAttendees(mixed $value): string
         $parts[] = $name !== '' ? $name . ' <' . $email . '>' : $email;
     }
     return implode(', ', $parts);
+}
+
+/**
+ * Human-readable instant text for a calendar object's Body (dev.elonn canonical/object.md,
+ * Content body), reusing the already-formatted content.starts_at/ends_at/due_at the Head
+ * fields already carry (timeFormatContractInstant()) rather than re-deriving from raw storage.
+ */
+function timeFormatHumanInstant(string $iso, bool $dateOnly): string
+{
+    $date = new DateTimeImmutable($iso);
+    return $dateOnly ? $date->format('l, F j, Y') : $date->format('l, F j, Y, g:i A');
+}
+
+/** Body schedule text for a VEVENT: a single start, a start/end on one day, or a start/end
+ * spanning multiple days -- timed or all-day. Null when there is no starts_at at all. */
+function timeEventScheduleText(array $content): ?string
+{
+    $startsAt = $content['starts_at'] ?? null;
+    if (!is_string($startsAt) || $startsAt === '') {
+        return null;
+    }
+    $endsAt = is_string($content['ends_at'] ?? null) && $content['ends_at'] !== '' ? $content['ends_at'] : null;
+    $allDay = (bool) ($content['all_day'] ?? false);
+
+    if ($allDay) {
+        $startText = timeFormatHumanInstant($startsAt, true);
+        if ($endsAt === null || substr($endsAt, 0, 10) === substr($startsAt, 0, 10)) {
+            return $startText . ' (all day)';
+        }
+        return $startText . ' - ' . timeFormatHumanInstant($endsAt, true) . ' (all day)';
+    }
+
+    $zoneName = is_string($content['timezone'] ?? null) ? trim($content['timezone']) : '';
+    $zoneSuffix = $zoneName !== '' ? ' (' . $zoneName . ')' : '';
+    $startText = timeFormatHumanInstant($startsAt, false);
+    if ($endsAt === null) {
+        return $startText . $zoneSuffix;
+    }
+    if (substr($endsAt, 0, 10) === substr($startsAt, 0, 10)) {
+        return $startText . ' - ' . (new DateTimeImmutable($endsAt))->format('g:i A') . $zoneSuffix;
+    }
+    return $startText . ' - ' . timeFormatHumanInstant($endsAt, false) . $zoneSuffix;
+}
+
+/** Body schedule text for a VTODO: starts_at and/or due_at, each explicitly labeled since
+ * neither one is self-evident the way an event's single start/end range is. Null when
+ * neither is set. */
+function timeTaskScheduleText(array $content): ?string
+{
+    $zoneName = is_string($content['timezone'] ?? null) ? trim($content['timezone']) : '';
+    $zoneSuffix = $zoneName !== '' ? ' (' . $zoneName . ')' : '';
+    $parts = [];
+    if (is_string($content['starts_at'] ?? null) && $content['starts_at'] !== '') {
+        $parts[] = 'Starts ' . timeFormatHumanInstant($content['starts_at'], false) . $zoneSuffix;
+    }
+    if (is_string($content['due_at'] ?? null) && $content['due_at'] !== '') {
+        $parts[] = 'Due ' . timeFormatHumanInstant($content['due_at'], false) . $zoneSuffix;
+    }
+    return $parts === [] ? null : implode('. ', $parts) . '.';
+}
+
+/**
+ * A human-readable label for a calendar object's iCalendar STATUS vocabulary (CONFIRMED/
+ * CANCELLED/TENTATIVE for a VEVENT; NEEDS-ACTION/IN-PROCESS/COMPLETED/CANCELLED for a VTODO;
+ * the app's own 'active' alias for CONFIRMED). Falls back to a capitalized form of whatever
+ * value is actually stored, rather than silently dropping an unrecognized status.
+ */
+function timeHumanStatus(string $status): string
+{
+    $normalized = strtolower(trim($status));
+    if ($normalized === '') {
+        return '';
+    }
+    return match ($normalized) {
+        'confirmed', 'active' => 'Confirmed',
+        'cancelled', 'canceled' => 'Cancelled',
+        'tentative' => 'Tentative',
+        'needs-action' => 'Needs action',
+        'in-process' => 'In progress',
+        'completed' => 'Completed',
+        default => ucfirst(str_replace(['-', '_'], ' ', $normalized)),
+    };
+}
+
+/**
+ * A bounded-effort, always-produces-something natural-language rendering of an RFC 5545 RRULE
+ * string's most common shape (FREQ, INTERVAL, BYDAY, COUNT, UNTIL). An RRULE this doesn't fully
+ * understand still renders as a plain 'Repeats' sentence with whatever parts it did recognize,
+ * rather than surfacing the raw RRULE syntax to a member.
+ */
+function timeHumanRecurrence(string $rrule): string
+{
+    $parts = [];
+    foreach (explode(';', $rrule) as $pair) {
+        $keyValue = explode('=', $pair, 2);
+        if (count($keyValue) === 2 && trim($keyValue[0]) !== '') {
+            $parts[strtoupper(trim($keyValue[0]))] = trim($keyValue[1]);
+        }
+    }
+
+    $dayNames = ['MO' => 'Monday', 'TU' => 'Tuesday', 'WE' => 'Wednesday', 'TH' => 'Thursday', 'FR' => 'Friday', 'SA' => 'Saturday', 'SU' => 'Sunday'];
+    $interval = max(1, (int) ($parts['INTERVAL'] ?? 1));
+    $sentence = match (strtoupper($parts['FREQ'] ?? '')) {
+        'DAILY' => $interval === 1 ? 'Repeats daily' : "Repeats every {$interval} days",
+        'WEEKLY' => $interval === 1 ? 'Repeats weekly' : "Repeats every {$interval} weeks",
+        'MONTHLY' => $interval === 1 ? 'Repeats monthly' : "Repeats every {$interval} months",
+        'YEARLY' => $interval === 1 ? 'Repeats yearly' : "Repeats every {$interval} years",
+        default => 'Repeats',
+    };
+
+    if (isset($parts['BYDAY'])) {
+        $days = array_map(
+            static fn (string $day): string => $dayNames[strtoupper(trim($day))] ?? trim($day),
+            explode(',', $parts['BYDAY'])
+        );
+        $sentence .= ' on ' . implode(', ', $days);
+    }
+    if (isset($parts['COUNT'])) {
+        $sentence .= ', ' . $parts['COUNT'] . ' times';
+    } elseif (isset($parts['UNTIL'])) {
+        $sentence .= ' until ' . $parts['UNTIL'];
+    }
+
+    return $sentence . '.';
+}
+
+/**
+ * Canonical Body nodes (dev.elonn canonical/object.md, Content body) presenting a calendar
+ * event or task's substantive, human-readable information -- applicable dates/times,
+ * location, attendees, status, recurrence, and calendar -- for generic Runtime presentation.
+ * This is additive, never a replacement: the same information already lives in this Object's
+ * structured content fields (starts_at, location, attendees, etc.) for operations, which stay
+ * exactly as they are (dev.elonn canonical/object.md, Content: Head and Body). Body is also
+ * independent of, and never duplicates, the four canonical text fields -- summary already
+ * carries this Object's own condensed account (its SUMMARY property) and description its own
+ * notes; neither is re-presented here. A section this Object has no real data for is simply
+ * omitted, never manufactured empty (same doc, Content body).
+ *
+ * @param array<string, mixed> $content
+ * @return array<int, array<string, mixed>>
+ */
+function timeCalendarObjectBodyNodes(array $content): array
+{
+    $nodes = [];
+
+    $schedule = (string) ($content['component_type'] ?? '') === 'VTODO'
+        ? timeTaskScheduleText($content)
+        : timeEventScheduleText($content);
+    if ($schedule !== null) {
+        $nodes[] = ['node' => 'section', 'kind' => 'schedule', 'content' => [
+            ['node' => 'paragraph', 'text' => $schedule],
+        ]];
+    }
+
+    $location = trim((string) ($content['location'] ?? ''));
+    if ($location !== '') {
+        $nodes[] = ['node' => 'section', 'kind' => 'location', 'content' => [
+            ['node' => 'paragraph', 'text' => $location],
+        ]];
+    }
+
+    $attendeeEntries = array_values(array_filter(array_map(
+        'trim',
+        explode(',', is_string($content['attendees'] ?? null) ? $content['attendees'] : '')
+    ), static fn (string $entry): bool => $entry !== ''));
+    if ($attendeeEntries !== []) {
+        $nodes[] = ['node' => 'section', 'kind' => 'attendees', 'content' => [
+            ['node' => 'list', 'ordered' => false, 'items' => array_map(
+                static fn (string $entry): array => ['content' => [['node' => 'paragraph', 'text' => $entry]]],
+                $attendeeEntries
+            )],
+        ]];
+    }
+
+    $status = timeHumanStatus((string) ($content['status'] ?? ''));
+    if ($status !== '') {
+        $nodes[] = ['node' => 'section', 'kind' => 'status', 'content' => [
+            ['node' => 'paragraph', 'text' => $status],
+        ]];
+    }
+
+    $recurrenceRule = trim((string) ($content['recurrence_rule'] ?? ''));
+    if ($recurrenceRule !== '') {
+        $nodes[] = ['node' => 'section', 'kind' => 'recurrence', 'content' => [
+            ['node' => 'paragraph', 'text' => timeHumanRecurrence($recurrenceRule)],
+        ]];
+    }
+
+    $calendarName = trim((string) ($content['calendar'] ?? ''));
+    if ($calendarName !== '') {
+        $nodes[] = ['node' => 'section', 'kind' => 'calendar', 'content' => [
+            ['node' => 'paragraph', 'text' => $calendarName],
+        ]];
+    }
+
+    return $nodes;
+}
+
+/**
+ * Canonical Body nodes for a time.calendar Object: its own substantive properties worth a
+ * member seeing -- which component types it supports, its declared time zone, and (for a
+ * Social-owned mirror) what it mirrors. Lighter than an event/task's Body since a calendar has
+ * fewer substantive properties; a property with no real value is simply omitted.
+ *
+ * @param array<string, mixed> $content
+ * @return array<int, array<string, mixed>>
+ */
+function timeCalendarBodyNodes(array $content): array
+{
+    $nodes = [];
+
+    $componentTypes = array_filter(array_map('trim', explode(',', (string) ($content['components'] ?? ''))));
+    $supports = array_values(array_filter([
+        in_array('VEVENT', $componentTypes, true) ? 'events' : null,
+        in_array('VTODO', $componentTypes, true) ? 'tasks' : null,
+    ]));
+    if ($supports !== []) {
+        $nodes[] = ['node' => 'section', 'kind' => 'components', 'content' => [
+            ['node' => 'paragraph', 'text' => 'Supports ' . implode(' and ', $supports) . '.'],
+        ]];
+    }
+
+    $timezone = is_string($content['timezone'] ?? null) ? trim($content['timezone']) : '';
+    if ($timezone !== '') {
+        $nodes[] = ['node' => 'section', 'kind' => 'timezone', 'content' => [
+            ['node' => 'paragraph', 'text' => $timezone],
+        ]];
+    }
+
+    $source = is_array($content['source'] ?? null) ? $content['source'] : null;
+    $sourceService = $source !== null ? trim((string) ($source['service'] ?? '')) : '';
+    if ($sourceService !== '') {
+        $nodes[] = ['node' => 'section', 'kind' => 'source', 'content' => [
+            ['node' => 'paragraph', 'text' => 'Mirrored from ' . ucfirst($sourceService) . '.'],
+        ]];
+    }
+
+    return $nodes;
 }
 
 /**

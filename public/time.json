@@ -6,8 +6,8 @@
     "purpose": "Owns calendar and event data (CalDAV-backed calendar objects: events and tasks), scoped strictly to the authenticated member's own calendar objects. Does not own Social events (social.event, owned by social.elonn) -- Social events synced into a member's calendar arrive here only as ingested calendar objects with a source reference back to Social."
   },
   "contract": {
-    "revision": 11,
-    "published": "2026-10-24T00:00:00Z"
+    "revision": 12,
+    "published": "2026-10-26T00:00:00Z"
   },
   "labels": {
     "field.search_text": "Search",
@@ -323,6 +323,17 @@
           "name": {"type": "string", "meaning": "The identifying name. Always empty -- an event has no distinct identifying name."},
           "summary": {"type": "string", "meaning": "The underlying calendar format's own SUMMARY property -- a real condensed account, not a heading."},
           "description": {"type": "string", "meaning": "The underlying calendar format's own DESCRIPTION property, when present; empty otherwise."}
+        },
+        "content_body": {
+          "shape": "dev.elonn canonical/object.md, Content body -- an ordered list of 'section' nodes keyed by 'kind', each present only when the event has real data for it.",
+          "kinds": {
+            "schedule": "A human-readable rendering of starts_at/ends_at/all_day, in the event's own declared time zone.",
+            "location": "The event's location, when set.",
+            "attendees": "A 'list' node of attendee name/email entries, when any are set.",
+            "status": "A human-readable rendering of the event's STATUS (e.g. \"Confirmed\", \"Cancelled\").",
+            "recurrence": "A natural-language rendering of recurrence_rule, when set.",
+            "calendar": "The name of the calendar the event belongs to."
+          }
         }
       },
       "time.task object": {
@@ -331,6 +342,17 @@
           "name": {"type": "string", "meaning": "The identifying name. Always empty -- a task has no distinct identifying name."},
           "summary": {"type": "string", "meaning": "The underlying calendar format's own SUMMARY property -- a real condensed account, not a heading."},
           "description": {"type": "string", "meaning": "The underlying calendar format's own DESCRIPTION property, when present; empty otherwise."}
+        },
+        "content_body": {
+          "shape": "dev.elonn canonical/object.md, Content body -- an ordered list of 'section' nodes keyed by 'kind', each present only when the task has real data for it.",
+          "kinds": {
+            "schedule": "A human-readable rendering of starts_at and/or due_at, each explicitly labeled (\"Starts ...\" / \"Due ...\"), in the task's own declared time zone.",
+            "location": "The task's location, when set.",
+            "attendees": "A 'list' node of attendee name/email entries, when any are set.",
+            "status": "A human-readable rendering of the task's STATUS (e.g. \"Needs action\", \"Completed\").",
+            "recurrence": "A natural-language rendering of recurrence_rule, when set.",
+            "calendar": "The name of the calendar the task belongs to."
+          }
         }
       },
       "time.calendar object": {
@@ -339,6 +361,14 @@
           "name": {"type": "string", "meaning": "The calendar's own real name."},
           "summary": {"type": "string", "meaning": "A condensed account. Always empty -- a calendar has no distinct summary concept."},
           "description": {"type": "string", "meaning": "The calendar's own optional description, when present; empty otherwise."}
+        },
+        "content_body": {
+          "shape": "dev.elonn canonical/object.md, Content body -- an ordered list of 'section' nodes keyed by 'kind', each present only when the calendar has real data for it.",
+          "kinds": {
+            "components": "Which component types the calendar supports (events, tasks, or both).",
+            "timezone": "The calendar's own declared time zone, when set.",
+            "source": "Which Service this calendar mirrors, for a Social-owned mirror calendar."
+          }
         }
       },
       "time.calendars.results Collection": {

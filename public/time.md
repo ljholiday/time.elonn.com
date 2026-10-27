@@ -11,8 +11,8 @@ object carrying a `source` reference back to the originating Social event.
 
 - Service id: `time.elonn`
 - Domain: `calendar`
-- Revision: `10`
-- Published: `2026-10-17T00:00:00Z`
+- Revision: `12`
+- Published: `2026-10-26T00:00:00Z`
 - Canonical JSON: `https://time.elonn.com/time.json`
 - Service Publication: `https://time.elonn.com/time-publication.json`
 
@@ -273,6 +273,25 @@ records what each means specifically for these three Time structures.
   real concept, a heading — `title` carries it, `name` stays empty. `summary` carries the one
   real computed sentence (a count, e.g. "3 calendars available."); `description` has no
   distinct concept beyond it, so it stays empty rather than being filled by copying.
+
+### Content body
+
+`time.calendar_event`, `time.task`, and `time.calendar` objects may additionally carry a
+`content.body` (dev.elonn canonical/object.md, Content body): an ordered list of `section`
+nodes, each keyed by `kind`, presenting substantive information in human-readable form for
+generic Runtime presentation. This is additive — the same information already lives in each
+object's structured `content` fields (`starts_at`, `location`, `attendees`, `timezone`, and so
+on) for operations, which are unchanged; `body` never duplicates the canonical text fields
+above. A `kind` is present only when the object has real data for it — none is manufactured
+empty.
+
+- `time.calendar_event` / `time.task`: `schedule` (dates/times, in the object's own declared
+  time zone — an event shows a start/end range; a task labels `starts_at`/`due_at` explicitly,
+  since neither is self-evident the way an event's range is), `location`, `attendees` (a
+  `list` node), `status`, `recurrence` (a natural-language rendering of `recurrence_rule`),
+  `calendar` (the calendar's name).
+- `time.calendar`: `components` (which component types it supports), `timezone` (its own
+  declared zone), `source` (which Service it mirrors, for a Social-owned mirror calendar).
 
 ## Side Effects
 
